@@ -6,17 +6,20 @@ import { useEffect, useRef, useState } from "react";
 import { Aurora, Logo } from "@/components/Brand";
 import Confetti from "@/components/Confetti";
 import Wheel, { ICONS, type WheelHandle } from "@/components/Wheel";
+import PrizeModal from "@/components/PrizeModal";
 import { useToast } from "@/components/Toast";
 import Turnstile, { type TurnstileHandle } from "@/components/Turnstile";
 import { ApiErr, api } from "@/lib/api";
+import { errMsg } from "@/lib/store";
 import { DEFAULT_REWARDS, fmtDate, formatCode, normaliseCode, type Reward } from "@/lib/shared";
 
 type Phase = "enter" | "checking" | "ready" | "spinning" | "done";
 type Err = { kind: "invalid" | "used" | "expired" | "cancelled" | "empty" | "limit" | "bot" | "network"; expiresAt?: string } | null;
-type Active = { firstName: string; code: string; pass: string };
-type Result = { reward: Reward; ref: string; firstName: string; maskedEmail: string | null };
-type CheckRes = { ok: true; restored: true; firstName: string; reward: Reward; ref: string; maskedEmail: string | null } | { ok: true; restored: false; firstName: string; pass: string } | { ok: false; reason: "invalid" | "used" | "expired" | "cancelled"; expiresAt?: string };
-type SpinRes = { ok: true; restored: boolean; reward: Reward; ref: string; firstName: string; maskedEmail: string | null };
+type Active = { firstName: string; code: string; pass: string; spins: number };
+type Result = { reward: Reward; ref: string; firstName: string; maskedEmail: string | null; final: boolean; canRespin: boolean; spinsAllowed: number; spinsUsed: number };
+type CheckRes = ({ ok: true; restored: true; firstName: string; reward: Reward; ref: string; maskedEmail: string | null; final: boolean; canRespin: boolean; spinsAllowed: number; spinsUsed: number }) | { ok: true; restored: false; firstName: string; pass: string; spins: number } | { ok: false; reason: "invalid" | "used" | "expired" | "cancelled"; expiresAt?: string };
+type SpinRes = { ok: true; restored: boolean; reward: Reward; ref: string; firstName: string; maskedEmail: string | null; final: boolean; canRespin: boolean; spinsAllowed: number; spinsUsed: number };
+const toResult = (r: Omit<SpinRes, "ok" | "restored">): Result => ({ reward: r.reward, ref: r.ref, firstName: r.firstName, maskedEmail: r.maskedEmail, final: r.final, canRespin: r.canRespin, spinsAllowed: r.spinsAllowed, spinsUsed: r.spinsUsed });
 
 // The claim secret lives in THIS browser only. It is created before the spin request so that even if the response is lost
 // (connection drop, closed tab) the same browser can ask the server for its original result.
@@ -47,6 +50,8 @@ export default function Home() {
   const [showReveal, setShowReveal] = useState(false);
   const [restored, setRestored] = useState(false);
   const [winner, setWinner] = useState<number | null>(null);
+  const [peek, setPeek] = useState<Reward | null>(null);
+  const [accepting, setAccepting] = useState(false);
 
   useEffect(() => {
     api.get<{ rewards: Reward[]; turnstile: string | null }>("/api/public/wheel").then((d) => { setRewards(d.rewards); setTsKey(d.turnstile); }).catch(() => {});
@@ -78,9 +83,9 @@ export default function Home() {
     try {
       const [r] = await Promise.all([api.post<CheckRes>("/api/redeem/check", { code: value, claimToken: getClaim(value), turnstile: tsToken || undefined }), new Promise((x) => setTimeout(x, 700))]);
       if (!r.ok) return fail({ kind: r.reason, expiresAt: r.expiresAt });
-      if (r.restored) return showResult({ reward: r.reward, ref: r.ref, firstName: r.firstName, maskedEmail: r.maskedEmail }, true);
+      if (r.restored) { setActive({ firstName: r.firstName, code: formatCode(value), pass: "", spins: r.spinsAllowed }); return showResult(toResult(r), true); }
       setTsToken(""); // a Turnstile token is single-use; the widget issues a fresh one if the form comes back
-      setActive({ firstName: r.firstName, code: formatCode(value), pass: r.pass }); setPhase("ready");
+      setActive({ firstName: r.firstName, code: formatCode(value), pass: r.pass, spins: r.spins }); setPhase("ready");
     } catch (e) {
       if (e instanceof ApiErr && e.status === 429) { setCool(Number(e.data.retryAfter) || 30); return fail({ kind: "limit" }); }
       if (e instanceof ApiErr && e.data.reason === "bot") return fail({ kind: "bot" });
@@ -88,32 +93,46 @@ export default function Home() {
     }
   };
 
-  const spin = async () => {
-    if (phase !== "ready" || !active) return;
-    setPhase("spinning");
+  /** respin=true: the holder of a 2-spin code uses their second spin, which voids the first prize. */
+  const spin = async (respin = false) => {
+    if (!active || (!respin && phase !== "ready")) return;
+    setShowReveal(false); setPhase("spinning");
     if (window.innerWidth < 960) stage.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-    const claimToken = newClaim(active.code);
+    const claimToken = respin ? getClaim(active.code) ?? newClaim(active.code) : newClaim(active.code);
     let r: SpinRes | null = null;
     try {
       // The server picks + records the prize atomically; the wheel only animates to the result it returns.
-      r = await api.post<SpinRes>("/api/redeem/spin", { code: active.code, pass: active.pass, claimToken });
+      r = await api.post<SpinRes>("/api/redeem/spin", { code: active.code, pass: active.pass, claimToken, respin: respin || undefined });
     } catch (e) {
       if (e instanceof ApiErr && e.data.network) {
-        // Response may have been lost AFTER the server recorded the win — recover our original result.
-        try { const c = await api.post<CheckRes>("/api/redeem/check", { code: active.code, claimToken }); if (c.ok && c.restored) r = { ok: true, restored: true, reward: c.reward, ref: c.ref, firstName: c.firstName, maskedEmail: c.maskedEmail }; } catch {}
+        // Response may have been lost AFTER the server recorded the win: recover our current result.
+        try { const c = await api.post<CheckRes>("/api/redeem/check", { code: active.code, claimToken }); if (c.ok && c.restored) r = { ...c, ok: true }; } catch {}
       }
       if (!r) {
-        try { localStorage.removeItem(claimKey(active.code)); } catch {}
-        setActive(null);
+        if (!respin) { try { localStorage.removeItem(claimKey(active.code)); } catch {} setActive(null); }
+        else setPhase("done"); // keep the first prize on screen; nothing was changed
         return fail(e instanceof ApiErr && e.data.reason && ["used", "expired", "cancelled", "invalid"].includes(e.data.reason) ? { kind: e.data.reason } : { kind: "network" });
       }
     }
-    const res: Result = { reward: r.reward, ref: r.ref, firstName: r.firstName, maskedEmail: r.maskedEmail };
+    const res = toResult(r);
     const idx = rewards.findIndex((x) => x.id === res.reward.id);
-    setResult(res);
+    setResult(res); setRestored(false); setWinner(null);
     await wheel.current?.spinTo(idx);
     setWinner(idx); setPhase("done");
     setTimeout(() => setShowReveal(true), 650);
+  };
+
+  const accept = async () => {
+    if (!active && !value) return;
+    const code = active?.code ?? formatCode(value);
+    const claimToken = getClaim(code);
+    if (!claimToken) return toast("We couldn't confirm this browser holds the spin. Contact your VTH representative.", "error");
+    setAccepting(true);
+    try {
+      const r = await api.post<SpinRes>("/api/redeem/accept", { code, claimToken });
+      setResult(toResult(r)); toast("Prize accepted. VTH has been notified");
+    } catch (e) { toast(errMsg(e), "error"); }
+    setAccepting(false);
   };
 
   const reset = () => { setTsToken(""); setPhase("enter"); setValue(""); setErr(null); setActive(null); setResult(null); setWinner(null); setShowReveal(false); setRestored(false); };
@@ -127,7 +146,7 @@ export default function Home() {
         <header className="topbar">
           <Logo />
           <nav>
-            <Link className="link" href="/rules">Rules &amp; odds</Link>
+            <Link className="link" href="/rules">Prizes &amp; odds</Link>
             <Link className="link" href="/staff/login">Staff portal</Link>
           </nav>
         </header>
@@ -139,7 +158,7 @@ export default function Home() {
               Spin the wheel.<br /><span className="gold-text">Claim your reward.</span>
             </motion.h1>
             <motion.p className="lede" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.18, duration: 0.7 }}>
-              Thank you for being a valued VTH client. Enter the one-time code from your conversation with us to unlock a single spin — every section on the wheel is a prize.
+              Thank you for being a valued VTH client. Enter the one-time code from your conversation with us to unlock your spin. Every section on the wheel is a prize, and you can tap any prize to see what it includes.
             </motion.p>
 
             <motion.div className="glass panel" initial={{ opacity: 0, y: 28 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.28, duration: 0.7 }}>
@@ -162,7 +181,7 @@ export default function Home() {
                     <button className="btn btn-gold btn-lg shine" style={{ width: "100%", marginTop: 18 }} disabled={phase === "checking" || cool > 0}>
                       {phase === "checking" ? (<><span className="spinner" style={{ borderTopColor: "#2a1a00", borderColor: "rgba(42,26,0,.25)" }} /> Checking your code…</>) : cool > 0 ? (<><Timer size={18} /> Try again in {cool}s</>) : (<>Unlock My Spin <ArrowRight size={18} /></>)}
                     </button>
-                    <div className="notice"><Info size={15} /><span><b style={{ color: "var(--text)" }}>One spin per code.</b> Once your wheel stops, your reward is recorded straight away and the code can’t be used again.</span></div>
+                    <div className="notice"><Info size={15} /><span><b style={{ color: "var(--text)" }}>One-time code.</b> Most codes give one spin and your reward is recorded as soon as the wheel stops. Some codes give two spins: a second spin replaces your first prize, so you choose which to accept.</span></div>
                     <div className="trust"><span><ShieldCheck size={14} /> Protected by bot verification</span><span><Lock size={14} /> Secure &amp; private</span></div>
                   </motion.form>
                 )}
@@ -177,8 +196,8 @@ export default function Home() {
                       </div>
                     </div>
                     <p style={{ color: "var(--muted)", margin: "14px 0 20px" }}>Your wheel is unlocked. Press the glowing <b style={{ color: "var(--gold-2)" }}>SPIN</b> button in the centre — good luck!</p>
-                    <button className="btn btn-gold btn-lg shine" style={{ width: "100%" }} onClick={spin}><Gift size={20} /> Spin the Wheel</button>
-                    <div className="notice"><Info size={15} /><span>This is your one and only spin for code <b className="mono" style={{ color: "var(--text)" }}>{active?.code}</b>.</span></div>
+                    <button className="btn btn-gold btn-lg shine" style={{ width: "100%" }} onClick={() => spin()}><Gift size={20} /> Spin the Wheel</button>
+                    <div className="notice"><Info size={15} /><span>{(active?.spins ?? 1) > 1 ? <>This code gives you <b style={{ color: "var(--text)" }}>two spins</b>. After the first, you can accept your prize or spin again (the second prize replaces the first).</> : <>This is your one and only spin for code <b className="mono" style={{ color: "var(--text)" }}>{active?.code}</b>.</>}</span></div>
                   </motion.div>
                 )}
 
@@ -195,16 +214,22 @@ export default function Home() {
                 {phase === "done" && result && (
                   <motion.div key="done" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }}>
                     <div className="verified">
-                      <div className="tick" style={{ color: "var(--gold)", borderColor: "rgba(245,196,81,.5)", background: "rgba(245,196,81,.1)" }}><Trophy size={24} /></div>
+                      <div className="tick" style={{ color: "var(--gold)", borderColor: "rgba(255,185,0,.5)", background: "rgba(255,185,0,.1)" }}><Trophy size={24} /></div>
                       <div>
-                        <div style={{ color: "var(--gold)", fontSize: 12.5, fontWeight: 700, letterSpacing: ".12em", textTransform: "uppercase" }}>{restored ? "Welcome back" : "Reward recorded"}</div>
+                        <div style={{ color: "var(--gold)", fontSize: 12.5, fontWeight: 700, letterSpacing: ".12em", textTransform: "uppercase" }}>{result.final ? (restored ? "Welcome back" : "Reward recorded") : "Prize won, awaiting your decision"}</div>
                         <h3 style={{ fontSize: 22, marginTop: 2 }}>{result.reward.name}</h3>
                       </div>
                     </div>
-                    <p style={{ color: "var(--muted)", margin: "12px 0 18px", fontSize: 14 }}>Reference <b className="mono" style={{ color: "var(--gold-2)" }}>{result.ref}</b> — we’ve emailed the details and your VTH contact will be in touch.</p>
+                    {result.final ? (
+                      <p style={{ color: "var(--muted)", margin: "12px 0 18px", fontSize: 14 }}>Reference <b className="mono" style={{ color: "var(--gold-2)" }}>{result.ref}</b>. We’ve emailed the details and your VTH contact will be in touch.</p>
+                    ) : (
+                      <p style={{ color: "var(--muted)", margin: "12px 0 18px", fontSize: 14 }}>{result.canRespin ? "Happy with this? Accept it and VTH will arrange it. Or use your second spin: it replaces this prize." : "Accept this prize and VTH will arrange it."}</p>
+                    )}
                     <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                      <button className="btn btn-primary" onClick={() => setShowReveal(true)}>View my reward</button>
-                      <button className="btn btn-ghost" onClick={reset}>Use another code</button>
+                      {!result.final && <button className="btn btn-gold" onClick={accept} disabled={accepting}>{accepting ? <span className="spinner" /> : <><Check size={16} /> Accept this prize</>}</button>}
+                      {!result.final && result.canRespin && <button className="btn btn-primary" onClick={() => spin(true)}>Use my second spin</button>}
+                      <button className="btn btn-ghost" onClick={() => setShowReveal(true)}>View details</button>
+                      {result.final && <button className="btn btn-ghost" onClick={reset}>Use another code</button>}
                     </div>
                   </motion.div>
                 )}
@@ -214,13 +239,13 @@ export default function Home() {
             <div className="steps">
               <div><b>1</b> Get a code on your call</div>
               <div><b>2</b> Enter it &amp; spin</div>
-              <div><b>3</b> Reward is recorded instantly</div>
+              <div><b>3</b> Accept your prize</div>
             </div>
           </section>
 
           <motion.section ref={stage} className="stage" initial={{ opacity: 0, scale: 0.85, rotate: -12 }} animate={{ opacity: 1, scale: 1, rotate: 0 }} transition={{ delay: 0.15, duration: 1, type: "spring", damping: 18, stiffness: 70 }}>
-            <Wheel ref={wheel} rewards={rewards} locked={locked} ready={phase === "ready"} spinning={phase === "spinning"} winnerIndex={winner} onSpin={spin} />
-            <p className="fixed-note">{locked ? "Enter your code to unlock the wheel" : phase === "ready" ? "12 equal sections — every spin wins" : "Your result is decided and recorded before the wheel moves"}</p>
+            <Wheel ref={wheel} rewards={rewards} locked={locked} ready={phase === "ready"} spinning={phase === "spinning"} winnerIndex={winner} onSpin={() => spin()} onSelect={(i) => setPeek(rewards[i])} />
+            <p className="fixed-note">{locked ? "Tap any section to see the prize. Enter your code to unlock the wheel" : phase === "ready" ? "12 equal sections: every spin wins" : "Your result is decided and recorded before the wheel moves"}</p>
           </motion.section>
         </main>
       </div>
@@ -228,9 +253,14 @@ export default function Home() {
       <Confetti fire={showReveal && !restored} />
       <AnimatePresence>
         {showReveal && result && (
-          <Reveal key="reveal" result={result} restored={restored} onClose={() => setShowReveal(false)} toast={toast} />
+          <Reveal key="reveal" result={result} restored={restored} onClose={() => setShowReveal(false)} toast={toast} onAccept={accept} accepting={accepting} onRespin={() => spin(true)} />
         )}
       </AnimatePresence>
+      <AnimatePresence>{peek && <PrizeModal key={`p${peek.id}`} reward={peek} onClose={() => setPeek(null)} />}</AnimatePresence>
+      <footer className="sitefoot no-print">
+        <span>© Vocational Training Hub</span>
+        <Link href="/legal/terms">Terms &amp; Conditions</Link><Link href="/legal/privacy">Privacy Notice</Link><Link href="/legal/prize-rules">Prize Rules</Link>
+      </footer>
     </>
   );
 }
@@ -253,7 +283,7 @@ function ErrorBox({ err, cool }: { err: NonNullable<Err>; cool: number }) {
   );
 }
 
-function Reveal({ result, restored, onClose, toast }: { result: Result; restored: boolean; onClose: () => void; toast: (m: string) => void }) {
+function Reveal({ result, restored, onClose, toast, onAccept, accepting, onRespin }: { result: Result; restored: boolean; onClose: () => void; toast: (m: string) => void; onAccept: () => void; accepting: boolean; onRespin: () => void }) {
   const Icon = ICONS[result.reward.icon];
   const [copied, setCopied] = useState(false);
   const copy = async () => { try { await navigator.clipboard.writeText(result.ref); } catch {} setCopied(true); toast("Reference copied"); setTimeout(() => setCopied(false), 2000); };
@@ -262,19 +292,34 @@ function Reveal({ result, restored, onClose, toast }: { result: Result; restored
       <motion.div className="reveal" role="dialog" aria-modal="true" aria-label="Your reward" onClick={(e) => e.stopPropagation()}
         initial={{ opacity: 0, scale: 0.7, y: 60 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} transition={{ type: "spring", stiffness: 220, damping: 20 }}>
         <motion.div className="medal" initial={{ scale: 0, rotate: -180 }} animate={{ scale: 1, rotate: 0 }} transition={{ type: "spring", stiffness: 200, damping: 12, delay: 0.2 }}><Icon size={46} strokeWidth={1.8} /></motion.div>
-        <motion.h2 initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.45 }}>{restored ? "Welcome back — here’s your result" : `Congratulations, ${result.firstName}!`}</motion.h2>
+        <motion.h2 initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.45 }}>{restored ? "Welcome back, here’s your result" : `Congratulations, ${result.firstName}!`}</motion.h2>
         <motion.div className="prize gold-text" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.55 }}>{result.reward.name}</motion.div>
         <motion.p className="d" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.65 }}>{result.reward.desc}</motion.p>
         <motion.div className="refbox" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.8 }}>
           <div><small>Your reference number</small><b>{result.ref}</b></div>
           <button className="btn btn-ghost btn-sm" onClick={copy}>{copied ? <Check size={15} /> : <Copy size={15} />} {copied ? "Copied" : "Copy"}</button>
         </motion.div>
-        <motion.div className="recorded" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.95 }}><CheckCircle2 size={17} /> Your reward has been recorded</motion.div>
-        <motion.div className="next-list" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 1.05 }}>
-          <div><Mail size={16} /><span>A confirmation email {result.maskedEmail ? <>is on its way to <b style={{ color: "var(--text)" }}>{result.maskedEmail}</b></> : "will be sent"} with your claiming instructions.</span></div>
-          <div><Gift size={16} /><span>Quote your reference number when you get in touch with VTH.</span></div>
-        </motion.div>
-        <button className="btn btn-primary" style={{ marginTop: 24, width: "100%" }} onClick={onClose}>Done</button>
+        {result.final ? (
+          <>
+            <motion.div className="recorded" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.95 }}><CheckCircle2 size={17} /> Your reward has been recorded</motion.div>
+            <motion.div className="next-list" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 1.05 }}>
+              <div><Mail size={16} /><span>A confirmation email {result.maskedEmail ? <>is on its way to <b style={{ color: "var(--text)" }}>{result.maskedEmail}</b></> : "will be sent"} with your claiming instructions.</span></div>
+              <div><Gift size={16} /><span>Quote your reference number when you get in touch with VTH.</span></div>
+            </motion.div>
+            <button className="btn btn-primary" style={{ marginTop: 24, width: "100%" }} onClick={onClose}>Done</button>
+          </>
+        ) : (
+          <>
+            <motion.div className="next-list" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 1.0 }}>
+              <div><Gift size={16} /><span><b style={{ color: "var(--text)" }}>Accept</b> to confirm this prize. VTH is notified and will be in touch to arrange it.</span></div>
+              {result.canRespin && <div><Sparkles size={16} /><span><b style={{ color: "var(--text)" }}>Spin again</b> to use your second spin. That replaces this prize, and your second prize is final.</span></div>}
+            </motion.div>
+            <div style={{ display: "grid", gap: 10, marginTop: 22 }}>
+              <button className="btn btn-gold btn-lg" onClick={() => { onAccept(); onClose(); }} disabled={accepting}><Check size={18} /> Accept this prize</button>
+              {result.canRespin && <button className="btn btn-ghost" onClick={onRespin}>Spin again (replaces this prize)</button>}
+            </div>
+          </>
+        )}
       </motion.div>
     </motion.div>
   );

@@ -8,9 +8,10 @@ export const toCode = (r: CodeRow): Code => ({
   createdAt: r.createdAt.toISOString(), expiresAt: r.expiresAt.toISOString(), status: r.status, emailedAt: iso(r.emailedAt),
   usedAt: iso(r.usedAt), rewardId: r.rewardId ?? undefined, ref: r.ref ?? undefined, fulfilment: r.fulfilment ?? undefined,
   planId: r.planId ?? undefined, cycleNo: r.cycleNo ?? undefined,
+  spinsAllowed: r.spinsAllowed, spinsUsed: r.spinsUsed, acceptedAt: iso(r.acceptedAt), voidedCount: r.voided?.length ?? 0,
 });
 
-export const toReward = (r: RewardRow): Reward => ({ id: r.id, label: r.label, name: r.name, desc: r.description, icon: r.icon as IconKey });
+export const toReward = (r: RewardRow): Reward => ({ id: r.id, label: r.label, name: r.name, desc: r.description, icon: r.icon as IconKey, mediaType: r.mediaType ?? undefined, mediaUrl: r.mediaUrl ?? undefined });
 
 export const toActivity = (r: ActivityRow): Activity => ({ id: r.id, at: r.at.toISOString(), who: r.actorName, text: r.text, kind: r.kind });
 
@@ -21,7 +22,7 @@ export const toMember = (u: User): Member => ({
 
 export const toPlan = (p: PlanRow): Plan => ({
   id: p.id, name: p.recipientName, org: p.organisation, email: p.email, frequency: p.frequency, spinsPerCycle: p.spinsPerCycle,
-  codeValidityDays: p.codeValidityDays, startsAt: p.startsAt.toISOString(), nextRunAt: p.nextRunAt.toISOString(), endsAt: iso(p.endsAt),
+  codeValidityDays: p.codeValidityDays, expireAtNext: p.expireAtNext, startsAt: p.startsAt.toISOString(), nextRunAt: p.nextRunAt.toISOString(), endsAt: iso(p.endsAt),
   maxCycles: p.maxCycles ?? undefined, cyclesDone: p.cyclesDone, status: p.status, lastRunAt: iso(p.lastRunAt),
   createdBy: p.createdByName, createdAt: p.createdAt.toISOString(),
 });

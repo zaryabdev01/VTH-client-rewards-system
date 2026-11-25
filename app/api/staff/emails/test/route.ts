@@ -13,7 +13,7 @@ export const POST = route(async (req) => {
   const expiresAt = new Date(Date.now() + 14 * 864e5);
   const built = kind === "code" ? codeEmail(t, { name: "Sarah Mitchell", code: "VTH-TEST-CODE-0000", expiresAt })
     : kind === "reward" ? rewardEmail(t, { name: "Sarah Mitchell", reward: "£25 Learning Credit", ref: "REF-TEST0000" })
-    : recurringEmail(t, { name: "Sarah Mitchell", codes: ["VTH-TEST-CODE-0001", "VTH-TEST-CODE-0002"], expiresAt });
+    : recurringEmail(t, { name: "Sarah Mitchell", code: "VTH-TEST-CODE-0001", expiresAt, spins: 2 });
   const ok = await sendEmail(db, { to: me.email, kind: `test-${kind}`, ...built, subject: `[TEST] ${built.subject}` });
   if (!ok) throw new ApiError(502, "The test email could not be sent");
   return json({ ok: true, to: me.email });

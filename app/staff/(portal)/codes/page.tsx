@@ -1,6 +1,6 @@
 "use client";
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertTriangle, ArrowDown, ArrowUp, Ban, Check, CheckCheck, ChevronLeft, ChevronRight, Copy, Download, Mail, Plus, Repeat, Search, Send, Sparkles, X, XCircle } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, Ban, Check, Clock, CheckCheck, ChevronLeft, ChevronRight, Copy, Download, Mail, Plus, Repeat, Search, Send, Sparkles, X, XCircle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useToast } from "@/components/Toast";
 import { errMsg, useStore } from "@/lib/store";
@@ -11,7 +11,7 @@ const PAGE = 10;
 const DAY = 864e5;
 
 export default function Codes() {
-  const { codes, rewards, user, settings, generateCode, sendCode, cancelCode, fulfil, staffNames } = useStore();
+  const { codes, rewards, user, settings, generateCode, sendCode, cancelCode, fulfil, bulkCodes, staffNames } = useStore();
   const toast = useToast();
   const [q, setQ] = useState(""); const [tab, setTab] = useState("all"); const [reward, setReward] = useState("all"); const [emp, setEmp] = useState("all"); const [range, setRange] = useState("all");
   const [sort, setSort] = useState<{ k: SortKey; dir: 1 | -1 }>({ k: "createdAt", dir: -1 });
@@ -20,7 +20,9 @@ export default function Codes() {
   const [created, setCreated] = useState<Code | null>(null);
   const [sel, setSel] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<Code | null>(null);
-  const [form, setForm] = useState({ name: "", org: "", email: "", days: settings.defaultExpiry, sendNow: true });
+  const [form, setForm] = useState({ name: "", org: "", email: "", days: settings.defaultExpiry, spins: 1, sendNow: true });
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [sending, setSending] = useState(false);
   const canExpiry = user?.role === "admin" || settings.staffCanChangeExpiry;
 
@@ -30,10 +32,10 @@ export default function Codes() {
     window.addEventListener("vth:new-code", open);
     return () => window.removeEventListener("vth:new-code", open);
   }, []);
-  useEffect(() => setPage(0), [q, tab, reward, emp, range, sort]);
+  useEffect(() => { setPage(0); setPicked(new Set()); }, [q, tab, reward, emp, range, sort]);
 
   const counts = useMemo(() => {
-    const c: Record<string, number> = { all: codes.length, active: 0, used: 0, expired: 0, cancelled: 0 };
+    const c: Record<string, number> = { all: codes.length, active: 0, awaiting: 0, used: 0, expired: 0, cancelled: 0 };
     codes.forEach((x) => c[effectiveStatus(x)]++);
     return c;
   }, [codes]);
@@ -64,10 +66,10 @@ export default function Codes() {
     setSending(true);
     try {
       const wantSend = form.sendNow && !!form.email.trim();
-      const r = await generateCode({ name: form.name.trim(), org: form.org.trim(), email: form.email.trim(), days: form.days, sendNow: wantSend });
+      const r = await generateCode({ name: form.name.trim(), org: form.org.trim(), email: form.email.trim(), days: form.days, spins: form.spins, sendNow: wantSend });
       setCreated(r.code);
       if (wantSend && !r.emailed) toast("Code created, but the email couldn’t be sent — use Send code to retry", "error");
-      setForm({ name: "", org: "", email: "", days: settings.defaultExpiry, sendNow: true });
+      setForm({ name: "", org: "", email: "", days: settings.defaultExpiry, spins: 1, sendNow: true });
     } catch (err) { toast(errMsg(err), "error"); }
     setSending(false);
   };
@@ -80,10 +82,23 @@ export default function Codes() {
     <th><button className="th-sort" onClick={() => toggleSort(k)}>{children}{sort.k === k ? (sort.dir === 1 ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowDown size={12} style={{ opacity: 0.25 }} />}</button></th>
   );
   const emailOk = !form.email || /^\S+@\S+\.\S+$/.test(form.email);
+  const pageIds = shown.map((c) => c.id);
+  const allPicked = pageIds.length > 0 && pageIds.every((id) => picked.has(id));
+  const toggle = (id: string) => setPicked((x) => { const n = new Set(x); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const pickedCodes = codes.filter((c) => picked.has(c.id));
+  const canBulkCancel = pickedCodes.some((c) => ["active", "awaiting"].includes(effectiveStatus(c)));
+  const canBulkSend = pickedCodes.some((c) => effectiveStatus(c) === "active" && c.email);
+  const bulk = async (action: "cancel" | "send") => {
+    if (action === "cancel" && !window.confirm(`Cancel ${picked.size} selected code${picked.size > 1 ? "s" : ""}? They will stop working immediately. This can't be undone.`)) return;
+    setBulkBusy(true);
+    try { const r = await bulkCodes([...picked], action); setPicked(new Set()); toast(`${r.done} code${r.done === 1 ? "" : "s"} ${action === "cancel" ? "cancelled" : "emailed"}${r.skipped ? `, ${r.skipped} skipped` : ""}`); }
+    catch (e) { toast(errMsg(e), "error"); }
+    setBulkBusy(false);
+  };
 
   const exportCsv = () => {
-    const head = "Code,Name,Organisation,Email,Status,Reward,Reference,Fulfilment,Created,Expires\n";
-    const body = rows.map((c) => [c.code, c.name, c.org, c.email, effectiveStatus(c), rname(c.rewardId), c.ref ?? "", c.fulfilment ?? "", c.createdAt, c.expiresAt].map((v) => `"${v}"`).join(",")).join("\n");
+    const head = "Code,Name,Organisation,Email,Status,Spins allowed,Spins used,Reward,Reference,Fulfilment,Created,Expires\n";
+    const body = rows.map((c) => [c.code, c.name, c.org, c.email, effectiveStatus(c), c.spinsAllowed, c.spinsUsed, rname(c.rewardId), c.ref ?? "", c.fulfilment ?? "", c.createdAt, c.expiresAt].map((v) => `"${v}"`).join(",")).join("\n");
     const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([head + body], { type: "text/csv" })); a.download = "vth-codes.csv"; a.click(); toast(`Exported ${rows.length} rows`);
   };
 
@@ -98,7 +113,7 @@ export default function Codes() {
     );
   };
 
-  const TABS = [["all", "All"], ["active", "Active"], ["used", "Used"], ["expired", "Expired"], ["cancelled", "Cancelled"]] as const;
+  const TABS = [["all", "All"], ["active", "Active"], ["awaiting", "Awaiting accept"], ["used", "Used"], ["expired", "Expired"], ["cancelled", "Cancelled"]] as const;
 
   return (
     <>
@@ -126,18 +141,32 @@ export default function Codes() {
         {(filtered || tab !== "all") && <button className="btn btn-ghost btn-sm" onClick={clearFilters}><X size={14} /> Clear</button>}
       </div>
 
+      <AnimatePresence>
+        {picked.size > 0 && (
+          <motion.div className="bulkbar" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
+            <b>{picked.size} selected</b>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button className="btn btn-ghost btn-sm" disabled={bulkBusy || !canBulkSend} onClick={() => bulk("send")}><Send size={14} /> Email codes</button>
+              <button className="btn btn-danger btn-sm" disabled={bulkBusy || !canBulkCancel} onClick={() => bulk("cancel")}><Ban size={14} /> Cancel codes</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setPicked(new Set())}>Clear</button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <div className="glass tablewrap">
         <table>
-          <thead><tr><Th k="name">Recipient</Th><th>Code</th><th>Status</th><th>Reward</th><Th k="createdAt">Created</Th><Th k="expiresAt">Expires</Th><th /></tr></thead>
+          <thead><tr><th style={{ width: 40 }}><input type="checkbox" className="cb" aria-label="Select all on this page" checked={allPicked} onChange={() => setPicked(allPicked ? new Set() : new Set(pageIds))} /></th><Th k="name">Recipient</Th><th>Code</th><th>Status</th><th>Reward</th><Th k="createdAt">Created</Th><Th k="expiresAt">Expires</Th><th /></tr></thead>
           <tbody>
             {shown.map((c) => {
               const s = effectiveStatus(c);
               return (
                 <motion.tr key={c.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }} onClick={() => setSel(c.id)}>
+                  <td onClick={(e) => e.stopPropagation()}><input type="checkbox" className="cb" aria-label={`Select ${c.name}`} checked={picked.has(c.id)} onChange={() => toggle(c.id)} /></td>
                   <td><b>{c.name}</b><div className="sub">{c.org || "—"}</div></td>
-                  <td><span className="mono">{c.code}</span>{c.planId && <span className="chip neutral" title="Issued by a recurring plan" style={{ marginLeft: 8 }}><Repeat size={11} /> #{c.cycleNo}</span>}</td>
-                  <td><span className={`chip ${s}`}>{s[0].toUpperCase() + s.slice(1)}</span> {c.emailedAt && s === "active" && <span title={`Emailed ${fmtDateTime(c.emailedAt)}`} style={{ color: "var(--dim)", verticalAlign: -2 }}><Mail size={14} /></span>}</td>
-                  <td>{c.rewardId ? <><div>{rname(c.rewardId)}</div><span className={`chip ${c.fulfilment}`} style={{ marginTop: 4 }}>{c.fulfilment}</span></> : <span style={{ color: "var(--dim)" }}>—</span>}</td>
+                  <td><span className="mono">{c.code}</span>{c.spinsAllowed > 1 && <span className="chip neutral" title="This code allows two spins" style={{ marginLeft: 8 }}>2 spins</span>}{c.planId && <span className="chip neutral" title="Issued by a recurring plan" style={{ marginLeft: 8 }}><Repeat size={11} /> #{c.cycleNo}</span>}</td>
+                  <td><span className={`chip ${s}`}>{s === "awaiting" ? "Awaiting accept" : s[0].toUpperCase() + s.slice(1)}</span> {c.emailedAt && s === "active" && <span title={`Emailed ${fmtDateTime(c.emailedAt)}`} style={{ color: "var(--dim)", verticalAlign: -2 }}><Mail size={14} /></span>}</td>
+                  <td>{c.rewardId ? <><div>{rname(c.rewardId)}</div><span className={`chip ${c.fulfilment ?? "awaiting"}`} style={{ marginTop: 4 }}>{c.fulfilment ?? "not accepted yet"}</span></> : <span style={{ color: "var(--dim)" }}>—</span>}</td>
                   <td><div>{fmtDate(c.createdAt)}</div><div className="sub">by {c.createdBy}</div></td>
                   <td>{expiryCell(c)}</td>
                   <td onClick={(e) => e.stopPropagation()}>
@@ -145,7 +174,7 @@ export default function Codes() {
                       <button className="icon-btn" title="Copy code" aria-label="Copy code" onClick={() => copy(c.code)}><Copy size={15} /></button>
                       {s === "active" && <button className="icon-btn" title={c.emailedAt ? "Resend code" : "Send code"} aria-label="Send code" onClick={() => send(c)}><Send size={15} /></button>}
                       {s === "used" && c.fulfilment === "pending" && <button className="icon-btn" title="Mark fulfilled" aria-label="Mark fulfilled" style={{ color: "var(--green)" }} onClick={() => run(() => fulfil(c.id), "Marked as fulfilled")}><CheckCheck size={16} /></button>}
-                      {s === "active" && <button className="icon-btn" title="Cancel code" aria-label="Cancel code" style={{ color: "var(--red)" }} onClick={() => setConfirm(c)}><Ban size={15} /></button>}
+                      {(s === "active" || s === "awaiting") && <button className="icon-btn" title="Cancel code" aria-label="Cancel code" style={{ color: "var(--red)" }} onClick={() => setConfirm(c)}><Ban size={15} /></button>}
                     </div>
                   </td>
                 </motion.tr>
@@ -186,6 +215,9 @@ export default function Codes() {
                       <div className="field"><label htmlFor="gx">Expires after</label>
                         <select id="gx" className="input" disabled={!canExpiry} value={form.days} onChange={(e) => setForm({ ...form, days: +e.target.value })}><option value={1}>24 hours</option><option value={7}>7 days</option><option value={14}>14 days</option><option value={30}>30 days</option><option value={90}>90 days</option></select>
                         {!canExpiry && <small style={{ color: "var(--dim)" }}>Set by admin ({settings.defaultExpiry} days)</small>}</div>
+                      <div className="field full"><label>Spins on this code</label>
+                        <div className="seg" style={{ width: "fit-content" }}>{[1, 2].map((n) => (<button type="button" key={n} className={form.spins === n ? "on" : ""} onClick={() => setForm({ ...form, spins: n })}>{form.spins === n && <motion.span layoutId="gspins" className="seg-pill" />}<span>{n} spin{n > 1 ? "s" : ""}</span></button>))}</div>
+                        {form.spins === 2 && <small style={{ color: "var(--dim)" }}>The client can spin a second time, which replaces their first prize. They then accept their prize.</small>}</div>
                       <label className="full check"><input type="checkbox" checked={form.sendNow && !!form.email} disabled={!form.email} onChange={(e) => setForm({ ...form, sendNow: e.target.checked })} /><span><b>Email the code immediately</b><small>{form.email ? `Sends the branded code email to ${form.email}` : "Add an email address to send straight away — otherwise read the code out on the call."}</small></span></label>
                     </div>
                     <button className="btn btn-gold btn-lg" style={{ width: "100%", marginTop: 20 }} disabled={!emailOk || !form.name.trim() || sending}><Sparkles size={18} /> Generate{form.sendNow && form.email ? " & send" : ""} code</button>
@@ -194,7 +226,7 @@ export default function Codes() {
                   <motion.div key="r" initial={{ opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }}>
                     <motion.div className="tick" style={{ marginBottom: 14 }} initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", damping: 12 }}><Check size={26} strokeWidth={3} /></motion.div>
                     <h2 style={{ fontSize: 24 }}>Code ready for {live.name.split(" ")[0]}</h2>
-                    <p style={{ color: "var(--muted)", fontSize: 14, marginTop: 4 }}>Valid until {fmtDate(live.expiresAt)} · one spin only.{live.emailedAt && <> Emailed to <b>{live.email}</b>.</>}</p>
+                    <p style={{ color: "var(--muted)", fontSize: 14, marginTop: 4 }}>Valid until {fmtDate(live.expiresAt)} · {live.spinsAllowed > 1 ? "two spins (a second spin replaces the first prize)" : "one spin only"}.{live.emailedAt && <> Emailed to <b>{live.email}</b>.</>}</p>
                     <motion.div className="bigcode" initial={{ scale: 0.92 }} animate={{ scale: 1 }}><b>{live.code}</b></motion.div>
                     <div style={{ display: "flex", gap: 10 }}>
                       <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => copy(live.code)}><Copy size={16} /> Copy</button>
@@ -243,13 +275,17 @@ export default function Codes() {
               <dl className="kv">
                 <dt>Email</dt><dd>{selected.email || "—"}</dd><dt>Issued by</dt><dd>{selected.createdBy}</dd>
                 <dt>Expires</dt><dd>{fmtDate(selected.expiresAt)}</dd>
+                <dt>Spins</dt><dd>{selected.spinsUsed} of {selected.spinsAllowed} used</dd>
                 <dt>Reward</dt><dd>{rname(selected.rewardId)}</dd><dt>Reference</dt><dd className="mono">{selected.ref ?? "—"}</dd>
               </dl>
               <h3 style={{ fontSize: 15, margin: "26px 0 4px" }}>Audit trail</h3>
               <div className="timeline">
                 <div className="tl"><i /><div>Code generated<small>{fmtDateTime(selected.createdAt)} · {selected.createdBy}</small></div></div>
                 {selected.emailedAt && <div className="tl"><i /><div>Code emailed<small>{fmtDateTime(selected.emailedAt)} · {selected.email}</small></div></div>}
-                {selected.usedAt && <div className="tl"><i style={{ background: "var(--gold)" }} /><div>Spun &amp; redeemed — {rname(selected.rewardId)}<small>{fmtDateTime(selected.usedAt)}</small></div></div>}
+                {selected.voidedCount > 0 && <div className="tl"><i style={{ background: "var(--amber)" }} /><div>Spun twice: the first prize was voided<small>{selected.voidedCount} earlier prize{selected.voidedCount > 1 ? "s" : ""} replaced by the second spin</small></div></div>}
+                {selected.usedAt && <div className="tl"><i style={{ background: "var(--gold)" }} /><div>Spun &amp; won: {rname(selected.rewardId)}<small>{fmtDateTime(selected.usedAt)}</small></div></div>}
+                {selected.acceptedAt && selected.spinsAllowed > 1 && <div className="tl"><i style={{ background: "var(--green)" }} /><div>Client accepted the prize, ready to action<small>{fmtDateTime(selected.acceptedAt)}</small></div></div>}
+                {effectiveStatus(selected) === "awaiting" && <div className="tl"><i style={{ background: "var(--amber)" }} /><div>Waiting for the client to accept (or spin again)<small>Accepted automatically when the code expires on {fmtDate(selected.expiresAt)}</small></div></div>}
                 {selected.fulfilment === "fulfilled" && <div className="tl"><i style={{ background: "var(--green)" }} /><div>Reward marked fulfilled<small>VTH team</small></div></div>}
                 {selected.status === "cancelled" && <div className="tl"><i style={{ background: "var(--red)" }} /><div>Code cancelled</div></div>}
                 {effectiveStatus(selected) === "expired" && <div className="tl"><i style={{ background: "var(--amber)" }} /><div>Code expired<small>{fmtDateTime(selected.expiresAt)}</small></div></div>}
@@ -258,7 +294,7 @@ export default function Codes() {
                 <button className="btn btn-ghost" onClick={() => copy(selected.code)}><Copy size={15} /> Copy</button>
                 {effectiveStatus(selected) === "active" && <button className="btn btn-primary" onClick={() => send(selected)}><Send size={15} /> {selected.emailedAt ? "Resend" : "Send"} code</button>}
                 {selected.status === "used" && selected.fulfilment === "pending" && <button className="btn btn-gold" onClick={() => run(() => fulfil(selected.id), "Marked as fulfilled")}><CheckCheck size={16} /> Mark fulfilled</button>}
-                {effectiveStatus(selected) === "active" && <button className="btn btn-danger" onClick={() => { setConfirm(selected); setSel(null); }}><Ban size={15} /> Cancel code</button>}
+                {["active", "awaiting"].includes(effectiveStatus(selected)) && <button className="btn btn-danger" onClick={() => { setConfirm(selected); setSel(null); }}><Ban size={15} /> Cancel code</button>}
               </div>
             </motion.aside>
           </>

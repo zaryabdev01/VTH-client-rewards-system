@@ -11,7 +11,7 @@ export const ICONS: Record<IconKey, LucideIcon> = {
 
 // alternating deep tones with a gold hairline — all sections equal
 const FILLS = [
-  ["#15161b", "#101115"], ["#1a1b21", "#131419"],
+  ["#2a3cd6", "#192AC1"], ["#1D2C92", "#161f86"],
 ];
 const C = 200, R = 178;
 const polar = (r: number, deg: number) => {
@@ -27,9 +27,9 @@ const slice = (i: number) => {
 };
 
 export type WheelHandle = { spinTo: (index: number) => Promise<void>; pointTo: (index: number) => void };
-type Props = { rewards: Reward[]; locked: boolean; ready: boolean; spinning: boolean; winnerIndex?: number | null; onSpin: () => void };
+type Props = { rewards: Reward[]; locked: boolean; ready: boolean; spinning: boolean; winnerIndex?: number | null; onSpin: () => void; onSelect?: (index: number) => void };
 
-const Wheel = forwardRef<WheelHandle, Props>(function Wheel({ rewards, locked, ready, spinning, winnerIndex, onSpin }, ref) {
+const Wheel = forwardRef<WheelHandle, Props>(function Wheel({ rewards, locked, ready, spinning, winnerIndex, onSpin, onSelect }, ref) {
   const reduce = useReducedMotion();
   const rot = useMotionValue(0);
   const pointer = useMotionValue(0);
@@ -85,11 +85,11 @@ const Wheel = forwardRef<WheelHandle, Props>(function Wheel({ rewards, locked, r
       <motion.div className="wheel-pointer" style={{ rotate: pointer, transformOrigin: "50% 28%" }} aria-hidden>
         <svg viewBox="0 0 60 78" width="100%" height="100%">
           <defs>
-            <linearGradient id="pg" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="#ecdfbb" /><stop offset="1" stopColor="#b99b5c" /></linearGradient>
+            <linearGradient id="pg" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="#FFD35C" /><stop offset="1" stopColor="#b99b5c" /></linearGradient>
             <filter id="ps" x="-30%" y="-30%" width="160%" height="170%"><feDropShadow dx="0" dy="4" stdDeviation="4" floodColor="#000" floodOpacity=".5" /></filter>
           </defs>
-          <path d="M30 76 C30 76 6 46 6 28 A24 24 0 1 1 54 28 C54 46 30 76 30 76Z" fill="#0d0d10" stroke="#c9a96a" strokeWidth="1.6" filter="url(#ps)" />
-          <circle cx="30" cy="28" r="8" fill="none" stroke="#c9a96a" strokeWidth="1" /><circle cx="30" cy="28" r="2.6" fill="#d9c697" />
+          <path d="M30 76 C30 76 6 46 6 28 A24 24 0 1 1 54 28 C54 46 30 76 30 76Z" fill="#0d0d10" stroke="#FFB900" strokeWidth="1.6" filter="url(#ps)" />
+          <circle cx="30" cy="28" r="8" fill="none" stroke="#FFB900" strokeWidth="1" /><circle cx="30" cy="28" r="2.6" fill="#d9c697" />
         </svg>
       </motion.div>
 
@@ -104,17 +104,18 @@ const Wheel = forwardRef<WheelHandle, Props>(function Wheel({ rewards, locked, r
             <stop offset="0" stopColor="#e9dcb8" /><stop offset=".5" stopColor="#b79a5e" /><stop offset="1" stopColor="#6b5530" />
           </linearGradient>
         </defs>
-        <circle cx={C} cy={C} r={197} fill="#0b0b0e" stroke="#c9a96a" strokeOpacity=".6" strokeWidth="1" />
-        <circle cx={C} cy={C} r={186} fill="#0b0b0e" stroke="#c9a96a" strokeOpacity=".3" strokeWidth=".8" />
+        <circle cx={C} cy={C} r={197} fill="#0a0e2e" stroke="#FFB900" strokeOpacity=".6" strokeWidth="1" />
+        <circle cx={C} cy={C} r={186} fill="#0a0e2e" stroke="#FFB900" strokeOpacity=".3" strokeWidth=".8" />
         {rewards.map((r, i) => {
           const Icon = ICONS[r.icon];
           const lines = r.label.split("|");
           const win = winnerIndex === i;
           return (
-            <g key={r.id} opacity={winnerIndex != null && !win ? 0.45 : 1} style={{ transition: "opacity .6s" }}>
-              <path d={slice(i)} fill={`url(#wf${i % 2})`} stroke="#c9a96a" strokeOpacity={0.35} strokeWidth={0.7} />
+            <g key={r.id} opacity={winnerIndex != null && !win ? 0.45 : 1} className={onSelect ? "slice-hit" : undefined} style={{ transition: "opacity .6s", cursor: onSelect && !spinning ? "pointer" : undefined }}
+              onClick={onSelect && !spinning ? () => onSelect(i) : undefined}>
+              <path d={slice(i)} fill={`url(#wf${i % 2})`} stroke="#FFB900" strokeOpacity={0.35} strokeWidth={0.7} />
               <g transform={`rotate(${i * 30} ${C} ${C})`}>
-                <Icon x={C - 11} y={C - R + 10} width={20} height={20} color="#c9a96a" strokeWidth={1.4} />
+                <Icon x={C - 11} y={C - R + 10} width={20} height={20} color="#FFB900" strokeWidth={1.4} />
                 <text transform={`translate(${C} ${C - 140}) rotate(-90)`} textAnchor="end" className="wheel-text">
                   {lines.map((l, k) => (
                     <tspan key={k} x={0} dy={k === 0 ? (lines.length > 1 ? -2 : 4) : 14}>{l}</tspan>
@@ -127,9 +128,9 @@ const Wheel = forwardRef<WheelHandle, Props>(function Wheel({ rewards, locked, r
         {/* rim studs */}
         {Array.from({ length: 60 }).map((_, i) => {
           const [x1, y1] = polar(189, i * 6); const [x2, y2] = polar(i % 5 === 0 ? 194 : 192, i * 6);
-          return <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} stroke="#c9a96a" strokeOpacity={i % 5 === 0 ? 0.6 : 0.3} strokeWidth={0.8} />;
+          return <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} stroke="#FFB900" strokeOpacity={i % 5 === 0 ? 0.6 : 0.3} strokeWidth={0.8} />;
         })}
-        <circle cx={C} cy={C} r={46} fill="#0b0b0e" stroke="#c9a96a" strokeOpacity=".6" strokeWidth={1} />
+        <circle cx={C} cy={C} r={46} fill="#0a0e2e" stroke="#FFB900" strokeOpacity=".6" strokeWidth={1} />
       </motion.svg>
 
       {/* hub (does not rotate) */}

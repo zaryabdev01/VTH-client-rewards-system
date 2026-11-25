@@ -1,6 +1,6 @@
 "use client";
 import { AnimatePresence, motion } from "framer-motion";
-import { LayoutDashboard, KeyRound, Gift, Mail, LogOut, Menu, Plus, ExternalLink, ScrollText, Users, Repeat } from "lucide-react";
+import { LayoutDashboard, KeyRound, Gift, Mail, LogOut, Menu, Plus, ExternalLink, ScrollText, Users, Repeat, Scale } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -15,6 +15,7 @@ const NAV = [
   { href: "/staff/rewards", label: "Reward settings", icon: Gift },
   { href: "/staff/emails", label: "Email templates", icon: Mail },
   { href: "/staff/activity", label: "Activity log", icon: ScrollText },
+  { href: "/staff/legal", label: "Legal pages", icon: Scale },
   { href: "/staff/team", label: "Team & settings", icon: Users },
 ];
 

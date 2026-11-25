@@ -3,23 +3,23 @@
 export type IconKey =
   | "coins" | "user" | "percent" | "zap" | "gem" | "arrowUp" | "users" | "sparkles" | "video" | "award" | "crown" | "armchair";
 
-export type Reward = { id: number; label: string; name: string; desc: string; icon: IconKey };
-export type CodeStatus = "active" | "used" | "expired" | "cancelled";
+export type Reward = { id: number; label: string; name: string; desc: string; icon: IconKey; mediaType?: "image" | "video"; mediaUrl?: string };
+export type CodeStatus = "active" | "awaiting" | "used" | "expired" | "cancelled";
 export type Code = {
   id: string; code: string; name: string; org: string; email: string; createdBy: string;
   createdAt: string; expiresAt: string; status: "active" | "used" | "cancelled"; emailedAt?: string;
   usedAt?: string; rewardId?: number; ref?: string; fulfilment?: "pending" | "fulfilled";
-  planId?: string; cycleNo?: number;
+  planId?: string; cycleNo?: number; spinsAllowed: number; spinsUsed: number; acceptedAt?: string; voidedCount: number;
 };
-export type Activity = { id: string; at: string; who: string; text: string; kind: "code" | "email" | "spin" | "reward" | "fulfil" | "plan" };
+export type Activity = { id: string; at: string; who: string; text: string; kind: "code" | "email" | "spin" | "reward" | "fulfil" | "plan" | "accept" };
 export type Role = "admin" | "standard";
 export type User = { id: string; name: string; email: string; role: Role; initials: string };
 export type Member = { id: string; name: string; email: string; role: Role; active: boolean; lastActive: string | null; invited?: boolean };
 
-export type Frequency = "weekly" | "fortnightly" | "monthly";
+export type Frequency = "daily" | "weekly" | "fortnightly" | "monthly" | "yearly";
 export type PlanStatus = "active" | "paused" | "cancelled" | "completed";
 export type Plan = {
-  id: string; name: string; org: string; email: string; frequency: Frequency; spinsPerCycle: number; codeValidityDays: number;
+  id: string; name: string; org: string; email: string; frequency: Frequency; spinsPerCycle: number; codeValidityDays: number; expireAtNext: boolean;
   startsAt: string; nextRunAt: string; endsAt?: string; maxCycles?: number; cyclesDone: number; status: PlanStatus;
   lastRunAt?: string; createdBy: string; createdAt: string;
 };
@@ -54,6 +54,14 @@ export const DEFAULT_TEMPLATES: Templates = {
   recurringBody: "Hi {{name}},\n\nGood news – your next thank-you spin from VTH is ready. Below {{count}}.\n\nYour code expires on {{expiry}}. One spin per code, and every section on the wheel is a prize.",
   signOff: "Warm regards,\nThe VTH Team",
 };
+export type LegalDoc = { slug: string; title: string; body: string; updatedAt?: string; pdfUrl?: string };
+export const LEGAL_SLUGS = ["terms", "privacy", "prize-rules"] as const;
+const PLACEHOLDER = "This is placeholder text. VTH will supply the approved wording, which an administrator can paste in under Legal pages.";
+export const DEFAULT_LEGAL: LegalDoc[] = [
+  { slug: "terms", title: "Terms & Conditions", body: `# Terms & Conditions\n\n${PLACEHOLDER}` },
+  { slug: "privacy", title: "Privacy Notice", body: `# Privacy Notice\n\n${PLACEHOLDER}` },
+  { slug: "prize-rules", title: "Prize Rules", body: `# Prize Rules\n\nEach code gives one spin (some give two). Every section on the wheel is a prize. ${PLACEHOLDER}` },
+];
 export const DEFAULT_SETTINGS: Settings = { defaultExpiry: 14, staffCanChangeExpiry: true };
 
 export const ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no 0/O/1/I/L
@@ -66,10 +74,12 @@ export const formatCode = (s: string) => {
 };
 export const renderTpl = (t: string, v: Record<string, string>) => t.replace(/\{\{(\w+)\}\}/g, (_, k) => v[k] ?? `{{${k}}}`);
 
-export const effectiveStatus = (c: { status: Code["status"]; expiresAt: string }): CodeStatus =>
-  c.status === "active" && new Date(c.expiresAt).getTime() < Date.now() ? "expired" : c.status;
+/** "awaiting" = spun once on a 2-spin code but has not accepted the prize yet (can still spin again). */
+export const effectiveStatus = (c: { status: Code["status"]; expiresAt: string; spinsUsed?: number; acceptedAt?: string }): CodeStatus =>
+  c.status !== "active" ? c.status : (c.spinsUsed ?? 0) > 0 && !c.acceptedAt ? "awaiting" : new Date(c.expiresAt).getTime() < Date.now() ? "expired" : "active";
 
-export const FREQ_LABEL: Record<Frequency, string> = { weekly: "Every week", fortnightly: "Every 2 weeks", monthly: "Every month" };
+export const FREQ_LABEL: Record<Frequency, string> = { daily: "Every day", weekly: "Every week", fortnightly: "Every 2 weeks", monthly: "Every month", yearly: "Every year" };
+export const FREQUENCIES: Frequency[] = ["daily", "weekly", "fortnightly", "monthly", "yearly"];
 
 /* ---------- Formatters ---------- */
 export const fmtDate = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });

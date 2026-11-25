@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/server/db";
 import { ApiError, json, route } from "@/lib/server/http";
+import { autoAcceptExpired } from "@/lib/server/codes";
 import { runDuePlans } from "@/lib/server/plans";
 
 export const dynamic = "force-dynamic";
@@ -9,7 +10,10 @@ export const maxDuration = 60;
 async function handler(req: Request) {
   const secret = process.env.CRON_SECRET;
   if (secret ? req.headers.get("authorization") !== `Bearer ${secret}` : process.env.NODE_ENV === "production") throw new ApiError(401, "Unauthorized");
-  return json({ ok: true, ...(await runDuePlans(await getDb())) });
+  const db = await getDb();
+  const renewals = await runDuePlans(db);
+  const autoAccepted = await autoAcceptExpired(db);
+  return json({ ok: true, ...renewals, autoAccepted });
 }
 export const GET = route(handler);
 export const POST = route(handler);

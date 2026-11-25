@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef } from "react";
 
-const COLORS = ["#e6d4a8", "#c9a96a", "#f3f1ec", "#a3acdd", "#9a7b3f"];
+const COLORS = ["#FFD35C", "#FFB900", "#f3f1ec", "#a3acdd", "#9a7b3f"];
 
 export default function Confetti({ fire }: { fire: boolean }) {
   const ref = useRef<HTMLCanvasElement>(null);

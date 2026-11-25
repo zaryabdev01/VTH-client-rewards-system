@@ -13,6 +13,7 @@ const schema = z.object({
   org: z.string().trim().max(160).default(""),
   email: z.string().trim().email("Enter a valid email address").max(200).or(z.literal("")).default(""),
   days: z.number().int().min(1).max(365),
+  spins: z.number().int().min(1).max(2).default(1),
   sendNow: z.boolean().default(false),
 });
 
@@ -22,8 +23,8 @@ export const POST = route(async (req) => {
   const db = await getDb();
   const st = await getSettings(db);
   const days = me.role === "admin" || st.staffCanChangeExpiry ? d.days : st.defaultExpiry; // enforced server-side, not just in the UI
-  const row = await createCode(db, { name: d.name, org: d.org, email: d.email || null, days, by: { id: me.id, name: me.name } });
-  await logActivity(db, me.name, `Generated a code for ${d.name}${d.org ? ` (${d.org})` : ""}`, "code", me.id);
+  const row = await createCode(db, { name: d.name, org: d.org, email: d.email || null, days, spins: d.spins, by: { id: me.id, name: me.name } });
+  await logActivity(db, me.name, `Generated a ${d.spins === 2 ? "2-spin " : ""}code for ${d.name}${d.org ? ` (${d.org})` : ""}`, "code", me.id);
   let emailed = false;
   if (d.sendNow && row.email) emailed = await emailCode(db, row, me.name);
   const [fresh] = await db.select().from(codes).where(eq(codes.id, row.id));

@@ -3,7 +3,7 @@ const embed = (process.env.EMBED_ALLOWED_ORIGINS ?? "").split(",").map((s) => s.
 
 export default {
   distDir: process.env.NEXT_DIST || ".next",
-  serverExternalPackages: ["@electric-sql/pglite", "pg", "bcryptjs"],
+  serverExternalPackages: ["@electric-sql/pglite", "pg", "bcryptjs", "nodemailer"],
   async headers() {
     const base = [
       { key: "X-Content-Type-Options", value: "nosniff" },

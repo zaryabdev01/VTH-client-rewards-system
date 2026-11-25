@@ -18,6 +18,6 @@ export async function putSetting(db: Q, key: "portal" | "templates", value: unkn
 }
 
 /** Append to the audit trail. Accepts a transaction so the entry commits with the change it describes. */
-export async function logActivity(db: Q, who: string, text: string, kind: "code" | "email" | "spin" | "reward" | "fulfil" | "plan", actorId?: string | null) {
+export async function logActivity(db: Q, who: string, text: string, kind: "code" | "email" | "spin" | "reward" | "fulfil" | "plan" | "accept", actorId?: string | null) {
   await db.insert(activity).values({ actorName: who, actorId: actorId ?? null, text, kind });
 }

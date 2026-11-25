@@ -26,7 +26,7 @@ export const POST = route(async (req) => {
   // A returning browser recovers its original result (no Turnstile needed: the claim token is a secret).
   if (claimToken) {
     const back = await restoreCode(db, code, claimToken);
-    if (back) return json({ ok: true, restored: true, firstName: back.firstName, reward: back.reward, ref: back.ref, maskedEmail: maskEmail(back.email) });
+    if (back) return json({ ok: true, restored: true, firstName: back.firstName, reward: back.reward, ref: back.ref, maskedEmail: maskEmail(back.email), final: back.final, canRespin: back.canRespin, spinsAllowed: back.spinsAllowed, spinsUsed: back.spinsUsed });
   }
 
   if (!(await verifyTurnstile(turnstile, clientIp(req)))) throw new ApiError(403, "Verification failed. Please refresh and try again.", { reason: "bot" });
@@ -39,5 +39,5 @@ export const POST = route(async (req) => {
     }
     return json({ ok: false, reason: r.reason, expiresAt: r.expiresAt?.toISOString() });
   }
-  return json({ ok: true, restored: false, firstName: r.firstName, pass: signPass(normaliseCode(code)) });
+  return json({ ok: true, restored: false, firstName: r.firstName, spins: r.spins, pass: signPass(normaliseCode(code)) });
 });

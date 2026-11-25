@@ -89,7 +89,7 @@ export default function Dashboard() {
     { l: "Unused", v: d.active, i: Clock, c: "#c9a96a", foot: <span className="sub">Waiting to be spun</span>, data: d.issued.map((v, i) => Math.max(0, v - d.redeemed[i]) + 0.3) },
     { l: "Expired / cancelled", v: d.expired + d.cancelled, i: TimerOff, c: "#c98a62", foot: <span className="sub">{d.cancelled} cancelled</span>, data: d.issued.map((_, i) => ((i * 7) % 3) + 0.5) },
   ];
-  const icon = { code: KeyRound, email: Send, spin: PartyPopper, reward: Pencil, fulfil: CheckCheck, plan: Repeat } as const;
+  const icon = { code: KeyRound, email: Send, spin: PartyPopper, reward: Pencil, fulfil: CheckCheck, plan: Repeat, accept: CheckCheck } as const;
   const funnel = [
     { l: "Generated", n: d.total, c: "#7f8fd9" }, { l: "Emailed", n: d.emailed, c: "#6f9bd1" },
     { l: "Redeemed", n: d.used, c: "#5fb3a1" }, { l: "Fulfilled", n: d.fulfilled, c: "#2f8a57" },

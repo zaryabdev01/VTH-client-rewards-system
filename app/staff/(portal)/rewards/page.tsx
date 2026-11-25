@@ -1,15 +1,16 @@
 "use client";
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertTriangle, Eye, Lock, Pencil, RotateCcw, Save, X } from "lucide-react";
+import { AlertTriangle, Eye, ImageIcon, Lock, Pencil, RotateCcw, Save, Trash2, Upload, Video, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useToast } from "@/components/Toast";
+import PrizeModal, { videoSource } from "@/components/PrizeModal";
 import Wheel, { ICONS, type WheelHandle } from "@/components/Wheel";
 import { errMsg, useStore } from "@/lib/store";
 import { type IconKey, type Reward } from "@/lib/shared";
 
 export default function Rewards() {
-  const { rewards, user, updateReward, resetRewards, codes } = useStore();
+  const { rewards, user, updateReward, uploadMedia, resetRewards, codes } = useStore();
   const toast = useToast();
   const admin = user?.role === "admin";
   const wheel = useRef<WheelHandle>(null);
@@ -17,6 +18,9 @@ export default function Rewards() {
   const [hov, setHov] = useState<number | null>(null);
   const [draft, setDraft] = useState<Reward | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [peek, setPeek] = useState<Reward | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const pct = (100 / rewards.length).toFixed(2);
   const won = useMemo(() => Object.fromEntries(rewards.map((r) => [r.id, codes.filter((c) => c.rewardId === r.id).length])), [rewards, codes]);
@@ -36,9 +40,16 @@ export default function Rewards() {
   const save = async (e: React.FormEvent) => {
     e.preventDefault(); if (!draft) return;
     try {
-      await updateReward(draft.id, { name: draft.name.trim(), label: draft.label, desc: draft.desc.trim(), icon: draft.icon });
+      await updateReward(draft.id, { name: draft.name.trim(), label: draft.label, desc: draft.desc.trim(), icon: draft.icon, mediaType: draft.mediaUrl ? draft.mediaType ?? null : null, mediaUrl: draft.mediaUrl || null });
       toast("Reward saved — wheel & rules page updated"); close();
     } catch (err) { toast(errMsg(err), "error"); }
+  };
+  const pickFile = async (f: File | undefined) => {
+    if (!f || !draft) return;
+    setUploading(true);
+    try { const url = await uploadMedia(f); setDraft({ ...draft, mediaType: "image", mediaUrl: url }); toast("Image uploaded. Save to publish it"); }
+    catch (e) { toast(errMsg(e), "error"); }
+    setUploading(false); if (fileRef.current) fileRef.current.value = "";
   };
   const doReset = async () => {
     if (!confirmReset) { setConfirmReset(true); setTimeout(() => setConfirmReset(false), 3500); return; }
@@ -102,11 +113,28 @@ export default function Rewards() {
                   <div className="field"><label htmlFor="rl">Wheel label <span style={{ fontWeight: 400, color: "var(--dim)" }}>— use | for a line break</span></label>
                     <input id="rl" className="input" required value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} />
                     {labelWarn ? <small style={{ color: "var(--amber)", display: "flex", gap: 5, alignItems: "center" }}><AlertTriangle size={12} /> Max 2 lines of 14 characters to fit the wheel</small> : <small style={{ color: "var(--dim)" }}>{lines.length} line{lines.length > 1 ? "s" : ""} · fits the wheel</small>}</div>
-                  <div className="field"><label htmlFor="rd">Description shown to the client</label><textarea id="rd" className="input" rows={3} maxLength={140} value={draft.desc} onChange={(e) => setDraft({ ...draft, desc: e.target.value })} /><small style={{ color: "var(--dim)", textAlign: "right" }}>{draft.desc.length}/140</small></div>
+                  <div className="field"><label htmlFor="rd">Description shown to the client</label><textarea id="rd" className="input" rows={3} maxLength={400} value={draft.desc} onChange={(e) => setDraft({ ...draft, desc: e.target.value })} /><small style={{ color: "var(--dim)", textAlign: "right" }}>{draft.desc.length}/400</small></div>
                   <div className="field"><label>Icon</label>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
                       {(Object.keys(ICONS) as IconKey[]).map((k) => { const K = ICONS[k]; const on = draft.icon === k; return (
                         <button type="button" key={k} onClick={() => setDraft({ ...draft, icon: k })} className="icon-btn" style={{ width: 38, height: 38, borderColor: on ? "var(--gold)" : undefined, color: on ? "var(--gold-2)" : undefined, background: on ? "rgba(154,123,63,.1)" : undefined }} aria-pressed={on} aria-label={k}><K size={17} /></button>); })}
+                    </div></div>
+                  <div className="field"><label>Image or video <span style={{ fontWeight: 400, color: "var(--dim)" }}>(shown in the prize pop-up)</span></label>
+                    <div className="mediabox">
+                      <div className="thumb">
+                        {draft.mediaType === "image" && draft.mediaUrl ? /* eslint-disable-next-line @next/next/no-img-element */ <img src={draft.mediaUrl} alt="" />
+                          : draft.mediaType === "video" && draft.mediaUrl ? (videoSource(draft.mediaUrl) ? <span style={{ display: "flex", gap: 8, alignItems: "center" }}><Video size={18} /> Video attached</span> : <span style={{ color: "var(--amber)" }}>Use a YouTube, Vimeo or .mp4 link</span>)
+                          : <span style={{ display: "flex", gap: 8, alignItems: "center" }}><ImageIcon size={18} /> No media yet</span>}
+                      </div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={(e) => pickFile(e.target.files?.[0])} />
+                        <button type="button" className="btn btn-ghost btn-sm" disabled={uploading} onClick={() => fileRef.current?.click()}>{uploading ? <span className="spinner" /> : <><Upload size={14} /> Upload image</>}</button>
+                        {draft.mediaUrl && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setDraft({ ...draft, mediaType: undefined, mediaUrl: undefined })}><Trash2 size={14} /> Remove</button>}
+                        <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPeek({ ...draft })}><Eye size={14} /> Preview pop-up</button>
+                      </div>
+                      <input className="input" placeholder="…or paste a video link (YouTube, Vimeo, .mp4) or image link" value={draft.mediaUrl && !draft.mediaUrl.startsWith("/api/media/") ? draft.mediaUrl : ""}
+                        onChange={(e) => { const v = e.target.value.trim(); setDraft({ ...draft, mediaUrl: v || undefined, mediaType: v ? (/\.(png|jpe?g|webp|gif)(\?|$)/i.test(v) ? "image" : "video") : undefined }); }} />
+                      <small style={{ color: "var(--dim)" }}>Images: PNG, JPG, WebP or GIF up to 3 MB. Videos: paste a link so nothing heavy is stored here.</small>
                     </div></div>
                 </fieldset>
                 {admin ? (
@@ -120,6 +148,7 @@ export default function Rewards() {
           </AnimatePresence>
         </aside>
       </div>
+      <AnimatePresence>{peek && <PrizeModal key="peek" reward={peek} onClose={() => setPeek(null)} />}</AnimatePresence>
     </>
   );
 }
