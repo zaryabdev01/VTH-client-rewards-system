@@ -515,3 +515,17 @@ fieldset:disabled .input { opacity: .75; }
 .stats-strip { margin-top: auto; padding-top: 18px; border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
 .stats-strip span { display: block; font-size: 12px; color: var(--dim); } .stats-strip b { font-size: 20px; font-weight: 500; letter-spacing: -.02em; }
 @media (max-width: 640px) { .stats-strip { grid-template-columns: 1fr 1fr; } }
+
+.toast.err { border-color: rgba(217,114,111,.5); } .toast.err svg { color: var(--red); }
+
+/* ---- recurring plans ---- */
+.modal.wide { width: min(100%, 640px); max-height: calc(100vh - 40px); overflow-y: auto; }
+.summary { display: flex; gap: 12px; margin-top: 18px; padding: 14px 16px; border-radius: 10px; background: #faf6ec; border: 1px solid rgba(154,123,63,.3); font-size: 14px; color: #4a3a14; line-height: 1.55; }
+.summary svg { flex: none; margin-top: 3px; color: #9a7b3f; } .summary .exposure { display: block; margin-top: 4px; color: #7d6129; }
+.how { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin-top: 16px; } .how > div { display: grid; gap: 8px; align-content: start; font-size: 14px; } .how small { color: var(--dim); font-size: 13px; line-height: 1.5; }
+@media (max-width: 900px) { .how { grid-template-columns: 1fr 1fr; } } @media (max-width: 520px) { .how { grid-template-columns: 1fr; } }
+.plan-code { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); } .plan-code small { display: block; color: var(--dim); font-size: 12px; margin-top: 2px; }
+.seg button:disabled, .icon-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+/* ---- embed mode (?embed=1, inside an iframe on the VTH site) ---- */
+html.embed .topbar { display: none; } html.embed .page { min-height: 0; } html.embed .hero { padding-top: 24px; padding-bottom: 36px; } html.embed .guide-fab, html.embed .guide { display: none; }

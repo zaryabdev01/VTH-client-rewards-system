@@ -24,3 +24,6 @@ Thumbs.db
 # logs
 npm-debug.log*
 *.log
+
+# local embedded database
+.data/

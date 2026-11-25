@@ -1,10 +1,11 @@
 "use client";
 import { animate, motion, useInView } from "framer-motion";
-import { AlertCircle, ArrowDownRight, ArrowRight, ArrowUpRight, CheckCheck, Clock, Gift, KeyRound, Mail, PartyPopper, Pencil, Send, TicketCheck, TimerOff } from "lucide-react";
+import { AlertCircle, ArrowDownRight, ArrowRight, ArrowUpRight, CheckCheck, Clock, Gift, KeyRound, Mail, PartyPopper, Pencil, Repeat, Send, TicketCheck, TimerOff } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useToast } from "@/components/Toast";
-import { effectiveStatus, fmtRelative, STAFF, timeAgo, useStore } from "@/lib/store";
+import { errMsg, useStore } from "@/lib/store";
+import { effectiveStatus, fmtRelative, timeAgo } from "@/lib/shared";
 
 function Count({ to }: { to: number }) {
   const ref = useRef<HTMLSpanElement>(null);
@@ -33,7 +34,7 @@ const inRange = (iso: string | undefined, from: number, to: number) => !!iso && 
 const DAY = 864e5;
 
 export default function Dashboard() {
-  const { codes, rewards, activity, user, sendCode, fulfil } = useStore();
+  const { codes, rewards, activity, user, sendCode, fulfil, staffNames } = useStore();
   const toast = useToast();
   const [range, setRange] = useState<7 | 14 | 30>(14);
   const [hover, setHover] = useState<number | null>(null);
@@ -53,13 +54,13 @@ export default function Dashboard() {
     const pending = usedAll.filter((c) => c.fulfilment === "pending");
     const unsent = codes.filter((c) => st(c) === "active" && !c.emailedAt && c.email);
     const expiring = codes.filter((c) => st(c) === "active" && new Date(c.expiresAt).getTime() - now < 2 * DAY).sort((a, b) => +new Date(a.expiresAt) - +new Date(b.expiresAt));
-    const staff = STAFF.map((n) => ({ n, c: codes.filter((c) => c.createdBy === n).length }));
+    const staff = staffNames.map((n: string) => ({ n, c: codes.filter((c) => c.createdBy === n).length }));
     return {
       total: codes.length, emailed: codes.filter((c) => c.emailedAt).length, used: usedAll.length, active: codes.filter((c) => st(c) === "active").length,
       expired: codes.filter((c) => st(c) === "expired").length, cancelled: codes.filter((c) => c.status === "cancelled").length,
       gen, genPrev, usedR: used, usedPrev, days, issued, redeemed, prizes, pending, unsent, expiring, staff, fulfilled: usedAll.length - pending.length,
     };
-  }, [codes, rewards, range]);
+  }, [codes, rewards, range, staffNames]);
 
   const delta = (a: number, b: number) => (b === 0 ? (a > 0 ? 100 : 0) : Math.round(((a - b) / b) * 100));
   const Delta = ({ a, b }: { a: number; b: number }) => {
@@ -79,7 +80,7 @@ export default function Dashboard() {
   const totalP = d.prizes.reduce((s, p) => s + p.n, 0) || 1;
   const R = 62, CIRC = 2 * Math.PI * R;
   let acc = 0;
-  const maxStaff = Math.max(1, ...d.staff.map((s) => s.c));
+  const maxStaff = Math.max(1, ...d.staff.map((s: { n: string; c: number }) => s.c));
 
   const kpis = [
     { l: "Codes generated", v: d.total, i: KeyRound, c: "#7f8fd9", foot: <Delta a={d.gen} b={d.genPrev} />, data: d.issued },
@@ -88,7 +89,7 @@ export default function Dashboard() {
     { l: "Unused", v: d.active, i: Clock, c: "#c9a96a", foot: <span className="sub">Waiting to be spun</span>, data: d.issued.map((v, i) => Math.max(0, v - d.redeemed[i]) + 0.3) },
     { l: "Expired / cancelled", v: d.expired + d.cancelled, i: TimerOff, c: "#c98a62", foot: <span className="sub">{d.cancelled} cancelled</span>, data: d.issued.map((_, i) => ((i * 7) % 3) + 0.5) },
   ];
-  const icon = { code: KeyRound, email: Send, spin: PartyPopper, reward: Pencil, fulfil: CheckCheck } as const;
+  const icon = { code: KeyRound, email: Send, spin: PartyPopper, reward: Pencil, fulfil: CheckCheck, plan: Repeat } as const;
   const funnel = [
     { l: "Generated", n: d.total, c: "#7f8fd9" }, { l: "Emailed", n: d.emailed, c: "#6f9bd1" },
     { l: "Redeemed", n: d.used, c: "#5fb3a1" }, { l: "Fulfilled", n: d.fulfilled, c: "#2f8a57" },
@@ -96,7 +97,12 @@ export default function Dashboard() {
   const attention = d.pending.length + d.unsent.length + d.expiring.length;
   const hour = new Date().getHours();
   const greet = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
-  const sendAll = () => { d.unsent.forEach((c) => sendCode(c.id)); toast(`Emailed ${d.unsent.length} code${d.unsent.length > 1 ? "s" : ""}`); };
+  const sendAll = async () => {
+    const n = d.unsent.length;
+    const r = await Promise.allSettled(d.unsent.map((c) => sendCode(c.id)));
+    const bad = r.filter((x) => x.status === "rejected").length;
+    if (bad) toast(`${bad} of ${n} emails failed to send`, "error"); else toast(`Emailed ${n} code${n > 1 ? "s" : ""}`);
+  };
 
   return (
     <>
@@ -163,7 +169,7 @@ export default function Dashboard() {
               {d.pending.slice(0, 3).map((c) => (
                 <div className="attn-row" key={c.id}>
                   <span><b>{c.name}</b><small>{rewards.find((r) => r.id === c.rewardId)?.name} · {c.ref}</small></span>
-                  <button className="btn btn-ghost btn-sm" onClick={() => { fulfil(c.id); toast(`Marked ${c.name.split(" ")[0]}’s reward fulfilled`); }}><CheckCheck size={14} /> Fulfil</button>
+                  <button className="btn btn-ghost btn-sm" onClick={async () => { try { await fulfil(c.id); toast(`Marked ${c.name.split(" ")[0]}’s reward fulfilled`); } catch (e) { toast(errMsg(e), "error"); } }}><CheckCheck size={14} /> Fulfil</button>
                 </div>
               ))}
             </div>
@@ -220,7 +226,7 @@ export default function Dashboard() {
 
         <motion.div className="glass card" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.45 }}>
           <h3>Activity per employee <small>Codes issued</small></h3>
-          {d.staff.map((s, i) => (
+          {d.staff.map((s: { n: string; c: number }, i: number) => (
             <div className="bar-row" key={s.n}><span style={{ color: "var(--muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.n}</span>
               <div className="track"><motion.div className="fill" initial={{ width: 0 }} animate={{ width: `${(s.c / maxStaff) * 100}%` }} transition={{ duration: 0.9, delay: 0.5 + i * 0.08 }} /></div><b>{s.c}</b></div>
           ))}

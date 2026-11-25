@@ -7,68 +7,117 @@ import { Aurora, Logo } from "@/components/Brand";
 import Confetti from "@/components/Confetti";
 import Wheel, { ICONS, type WheelHandle } from "@/components/Wheel";
 import { useToast } from "@/components/Toast";
-import { fmtDate, formatCode, useStore, type Code, type Reward } from "@/lib/store";
+import Turnstile, { type TurnstileHandle } from "@/components/Turnstile";
+import { ApiErr, api } from "@/lib/api";
+import { DEFAULT_REWARDS, fmtDate, formatCode, normaliseCode, type Reward } from "@/lib/shared";
 
 type Phase = "enter" | "checking" | "ready" | "spinning" | "done";
-type Err = { kind: "invalid" | "used" | "expired" | "cancelled" | "empty" | "limit"; code?: Code } | null;
+type Err = { kind: "invalid" | "used" | "expired" | "cancelled" | "empty" | "limit" | "bot" | "network"; expiresAt?: string } | null;
+type Active = { firstName: string; code: string; pass: string };
+type Result = { reward: Reward; ref: string; firstName: string; maskedEmail: string | null };
+type CheckRes = { ok: true; restored: true; firstName: string; reward: Reward; ref: string; maskedEmail: string | null } | { ok: true; restored: false; firstName: string; pass: string } | { ok: false; reason: "invalid" | "used" | "expired" | "cancelled"; expiresAt?: string };
+type SpinRes = { ok: true; restored: boolean; reward: Reward; ref: string; firstName: string; maskedEmail: string | null };
+
+// The claim secret lives in THIS browser only. It is created before the spin request so that even if the response is lost
+// (connection drop, closed tab) the same browser can ask the server for its original result.
+const claimKey = (code: string) => `vth-claim-${normaliseCode(code)}`;
+const getClaim = (code: string) => { try { return localStorage.getItem(claimKey(code)) ?? undefined; } catch { return undefined; } };
+const newClaim = (code: string) => {
+  const b = crypto.getRandomValues(new Uint8Array(24));
+  const t = btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  try { localStorage.setItem(claimKey(code), t); } catch {}
+  return t;
+};
 
 export default function Home() {
-  const { rewards, lookup, redeem, restoreFor, ready: storeReady } = useStore();
   const toast = useToast();
   const wheel = useRef<WheelHandle>(null);
   const stage = useRef<HTMLElement>(null);
+  const ts = useRef<TurnstileHandle>(null);
+  const [rewards, setRewards] = useState<Reward[]>(DEFAULT_REWARDS);
+  const [tsKey, setTsKey] = useState<string | null>(null);
+  const [tsToken, setTsToken] = useState("");
   const [value, setValue] = useState("");
   const [phase, setPhase] = useState<Phase>("enter");
   const [err, setErr] = useState<Err>(null);
   const shakeCtl = useAnimationControls();
-  const [fails, setFails] = useState(0);
   const [cool, setCool] = useState(0);
-  const [active, setActive] = useState<Code | null>(null);
-  const [result, setResult] = useState<{ reward: Reward; ref: string } | null>(null);
+  const [active, setActive] = useState<Active | null>(null);
+  const [result, setResult] = useState<Result | null>(null);
   const [showReveal, setShowReveal] = useState(false);
   const [restored, setRestored] = useState(false);
   const [winner, setWinner] = useState<number | null>(null);
 
+  useEffect(() => {
+    api.get<{ rewards: Reward[]; turnstile: string | null }>("/api/public/wheel").then((d) => { setRewards(d.rewards); setTsKey(d.turnstile); }).catch(() => {});
+    const qs = new URLSearchParams(window.location.search);
+    const q = qs.get("code"); // links in emails pre-fill the code
+    if (q) setValue(formatCode(q.trim()));
+    // Embed mode (?embed=1): hide the site header and tell the parent page how tall we are so its iframe can auto-resize.
+    if (qs.get("embed") === "1" && window.parent !== window) {
+      document.documentElement.classList.add("embed");
+      const post = () => window.parent.postMessage({ type: "vth-spin-height", height: document.documentElement.scrollHeight }, "*");
+      const ro = new ResizeObserver(post); ro.observe(document.body); post();
+      return () => ro.disconnect();
+    }
+  }, []);
   useEffect(() => { if (cool > 0) { const t = setTimeout(() => setCool(cool - 1), 1000); return () => clearTimeout(t); } }, [cool]);
 
-  const fail = (e: Err) => { setErr(e); shakeCtl.start({ x: [0, -9, 9, -7, 7, -3, 0], transition: { duration: 0.45 } }); setPhase("enter"); };
+  const fail = (e: Err) => { setErr(e); shakeCtl.start({ x: [0, -9, 9, -7, 7, -3, 0], transition: { duration: 0.45 } }); setPhase("enter"); ts.current?.reset(); };
+  const showResult = (r: Result, isRestore: boolean) => {
+    setResult(r); setRestored(isRestore);
+    setWinner(rewards.findIndex((x) => x.id === r.reward.id)); setPhase("done"); setShowReveal(true);
+  };
 
   const unlock = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (cool > 0) return;
     if (!value.trim()) return fail({ kind: "empty" });
+    if (tsKey && !tsToken) return fail({ kind: "bot" });
     setErr(null); setPhase("checking");
-    await new Promise((r) => setTimeout(r, 1100));
-    // a code already redeemed in this browser restores the original result (connection-drop safety)
-    const back = restoreFor(value);
-    if (back) {
-      setActive(back.code); setResult({ reward: back.reward, ref: back.code.ref! }); setRestored(true);
-      setWinner(rewards.findIndex((r) => r.id === back.reward.id)); setPhase("done"); setShowReveal(true); return;
+    try {
+      const [r] = await Promise.all([api.post<CheckRes>("/api/redeem/check", { code: value, claimToken: getClaim(value), turnstile: tsToken || undefined }), new Promise((x) => setTimeout(x, 700))]);
+      if (!r.ok) return fail({ kind: r.reason, expiresAt: r.expiresAt });
+      if (r.restored) return showResult({ reward: r.reward, ref: r.ref, firstName: r.firstName, maskedEmail: r.maskedEmail }, true);
+      setTsToken(""); // a Turnstile token is single-use; the widget issues a fresh one if the form comes back
+      setActive({ firstName: r.firstName, code: formatCode(value), pass: r.pass }); setPhase("ready");
+    } catch (e) {
+      if (e instanceof ApiErr && e.status === 429) { setCool(Number(e.data.retryAfter) || 30); return fail({ kind: "limit" }); }
+      if (e instanceof ApiErr && e.data.reason === "bot") return fail({ kind: "bot" });
+      fail({ kind: "network" });
     }
-    const res = lookup(value);
-    if (!res.ok) {
-      const nf = fails + 1; setFails(nf);
-      if (nf >= 5) { setCool(30); setFails(0); return fail({ kind: "limit" }); }
-      return fail({ kind: res.reason, code: res.code });
-    }
-    setActive(res.code); setPhase("ready");
   };
 
   const spin = async () => {
     if (phase !== "ready" || !active) return;
     setPhase("spinning");
     if (window.innerWidth < 960) stage.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-    // server decides + records the result first; the wheel only animates to it
-    const { code, reward } = redeem(active.id);
-    const idx = rewards.findIndex((r) => r.id === reward.id);
-    setResult({ reward, ref: code.ref! });
+    const claimToken = newClaim(active.code);
+    let r: SpinRes | null = null;
+    try {
+      // The server picks + records the prize atomically; the wheel only animates to the result it returns.
+      r = await api.post<SpinRes>("/api/redeem/spin", { code: active.code, pass: active.pass, claimToken });
+    } catch (e) {
+      if (e instanceof ApiErr && e.data.network) {
+        // Response may have been lost AFTER the server recorded the win — recover our original result.
+        try { const c = await api.post<CheckRes>("/api/redeem/check", { code: active.code, claimToken }); if (c.ok && c.restored) r = { ok: true, restored: true, reward: c.reward, ref: c.ref, firstName: c.firstName, maskedEmail: c.maskedEmail }; } catch {}
+      }
+      if (!r) {
+        try { localStorage.removeItem(claimKey(active.code)); } catch {}
+        setActive(null);
+        return fail(e instanceof ApiErr && e.data.reason && ["used", "expired", "cancelled", "invalid"].includes(e.data.reason) ? { kind: e.data.reason } : { kind: "network" });
+      }
+    }
+    const res: Result = { reward: r.reward, ref: r.ref, firstName: r.firstName, maskedEmail: r.maskedEmail };
+    const idx = rewards.findIndex((x) => x.id === res.reward.id);
+    setResult(res);
     await wheel.current?.spinTo(idx);
     setWinner(idx); setPhase("done");
     setTimeout(() => setShowReveal(true), 650);
   };
 
-  const reset = () => { setPhase("enter"); setValue(""); setErr(null); setActive(null); setResult(null); setWinner(null); setShowReveal(false); setRestored(false); };
-  const first = active?.name.split(" ")[0];
+  const reset = () => { setTsToken(""); setPhase("enter"); setValue(""); setErr(null); setActive(null); setResult(null); setWinner(null); setShowReveal(false); setRestored(false); };
+  const first = active?.firstName;
   const locked = phase === "enter" || phase === "checking";
 
   return (
@@ -109,6 +158,7 @@ export default function Home() {
 
                     <AnimatePresence>{err && <ErrorBox key={err.kind} err={err} cool={cool} />}</AnimatePresence>
 
+                    {tsKey && <div style={{ marginTop: 14 }}><Turnstile ref={ts} siteKey={tsKey} onToken={setTsToken} /></div>}
                     <button className="btn btn-gold btn-lg shine" style={{ width: "100%", marginTop: 18 }} disabled={phase === "checking" || cool > 0}>
                       {phase === "checking" ? (<><span className="spinner" style={{ borderTopColor: "#2a1a00", borderColor: "rgba(42,26,0,.25)" }} /> Checking your code…</>) : cool > 0 ? (<><Timer size={18} /> Try again in {cool}s</>) : (<>Unlock My Spin <ArrowRight size={18} /></>)}
                     </button>
@@ -169,7 +219,7 @@ export default function Home() {
           </section>
 
           <motion.section ref={stage} className="stage" initial={{ opacity: 0, scale: 0.85, rotate: -12 }} animate={{ opacity: 1, scale: 1, rotate: 0 }} transition={{ delay: 0.15, duration: 1, type: "spring", damping: 18, stiffness: 70 }}>
-            <Wheel ref={wheel} rewards={storeReady ? rewards : rewards} locked={locked} ready={phase === "ready"} spinning={phase === "spinning"} winnerIndex={winner} onSpin={spin} />
+            <Wheel ref={wheel} rewards={rewards} locked={locked} ready={phase === "ready"} spinning={phase === "spinning"} winnerIndex={winner} onSpin={spin} />
             <p className="fixed-note">{locked ? "Enter your code to unlock the wheel" : phase === "ready" ? "12 equal sections — every spin wins" : "Your result is decided and recorded before the wheel moves"}</p>
           </motion.section>
         </main>
@@ -178,7 +228,7 @@ export default function Home() {
       <Confetti fire={showReveal && !restored} />
       <AnimatePresence>
         {showReveal && result && (
-          <Reveal key="reveal" result={result} name={active?.name ?? ""} email={active?.email} restored={restored} onClose={() => setShowReveal(false)} toast={toast} />
+          <Reveal key="reveal" result={result} restored={restored} onClose={() => setShowReveal(false)} toast={toast} />
         )}
       </AnimatePresence>
     </>
@@ -190,8 +240,10 @@ function ErrorBox({ err, cool }: { err: NonNullable<Err>; cool: number }) {
     empty: { t: "Please enter your code", m: "Paste or type the code you received from your VTH contact.", i: <AlertTriangle size={20} />, w: true },
     invalid: { t: "We couldn’t find that code", m: "Check for typos, or ask your VTH contact to confirm the code.", i: <XCircle size={20} /> },
     used: { t: "This code has already been used", m: "Each code gives one spin. If you think this is a mistake, contact your VTH representative.", i: <XCircle size={20} /> },
-    expired: { t: "This code has expired", m: err.code ? `It expired on ${fmtDate(err.code.expiresAt)}. Ask your VTH contact to issue a new one straight away.` : "Ask your VTH contact to issue a new one.", i: <CalendarX size={20} />, w: true },
+    expired: { t: "This code has expired", m: err.expiresAt ? `It expired on ${fmtDate(err.expiresAt)}. Ask your VTH contact to issue a new one straight away.` : "Ask your VTH contact to issue a new one.", i: <CalendarX size={20} />, w: true },
     cancelled: { t: "This code is no longer active", m: "It has been cancelled. Please contact your VTH representative.", i: <XCircle size={20} /> },
+    bot: { t: "Please complete the security check", m: "Tick the box above to confirm you’re human, then try again.", i: <ShieldCheck size={20} />, w: true },
+    network: { t: "We couldn’t reach the server", m: "Check your connection and try again. If you already spun, re-enter your code and we’ll restore your result.", i: <AlertTriangle size={20} />, w: true },
     limit: { t: "Too many attempts", m: `For security, please wait ${cool || 30} seconds before trying again.`, i: <Timer size={20} />, w: true },
   }[err.kind];
   return (
@@ -201,7 +253,7 @@ function ErrorBox({ err, cool }: { err: NonNullable<Err>; cool: number }) {
   );
 }
 
-function Reveal({ result, name, email, restored, onClose, toast }: { result: { reward: Reward; ref: string }; name: string; email?: string; restored: boolean; onClose: () => void; toast: (m: string) => void }) {
+function Reveal({ result, restored, onClose, toast }: { result: Result; restored: boolean; onClose: () => void; toast: (m: string) => void }) {
   const Icon = ICONS[result.reward.icon];
   const [copied, setCopied] = useState(false);
   const copy = async () => { try { await navigator.clipboard.writeText(result.ref); } catch {} setCopied(true); toast("Reference copied"); setTimeout(() => setCopied(false), 2000); };
@@ -210,7 +262,7 @@ function Reveal({ result, name, email, restored, onClose, toast }: { result: { r
       <motion.div className="reveal" role="dialog" aria-modal="true" aria-label="Your reward" onClick={(e) => e.stopPropagation()}
         initial={{ opacity: 0, scale: 0.7, y: 60 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} transition={{ type: "spring", stiffness: 220, damping: 20 }}>
         <motion.div className="medal" initial={{ scale: 0, rotate: -180 }} animate={{ scale: 1, rotate: 0 }} transition={{ type: "spring", stiffness: 200, damping: 12, delay: 0.2 }}><Icon size={46} strokeWidth={1.8} /></motion.div>
-        <motion.h2 initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.45 }}>{restored ? "Welcome back — here’s your result" : `Congratulations, ${name.split(" ")[0]}!`}</motion.h2>
+        <motion.h2 initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.45 }}>{restored ? "Welcome back — here’s your result" : `Congratulations, ${result.firstName}!`}</motion.h2>
         <motion.div className="prize gold-text" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.55 }}>{result.reward.name}</motion.div>
         <motion.p className="d" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.65 }}>{result.reward.desc}</motion.p>
         <motion.div className="refbox" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.8 }}>
@@ -219,7 +271,7 @@ function Reveal({ result, name, email, restored, onClose, toast }: { result: { r
         </motion.div>
         <motion.div className="recorded" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.95 }}><CheckCircle2 size={17} /> Your reward has been recorded</motion.div>
         <motion.div className="next-list" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 1.05 }}>
-          <div><Mail size={16} /><span>A confirmation email {email ? <>is on its way to <b style={{ color: "var(--text)" }}>{email}</b></> : "will be sent"} with your claiming instructions.</span></div>
+          <div><Mail size={16} /><span>A confirmation email {result.maskedEmail ? <>is on its way to <b style={{ color: "var(--text)" }}>{result.maskedEmail}</b></> : "will be sent"} with your claiming instructions.</span></div>
           <div><Gift size={16} /><span>Quote your reference number when you get in touch with VTH.</span></div>
         </motion.div>
         <button className="btn btn-primary" style={{ marginTop: 24, width: "100%" }} onClick={onClose}>Done</button>

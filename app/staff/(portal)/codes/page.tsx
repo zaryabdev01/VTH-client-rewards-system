@@ -1,16 +1,17 @@
 "use client";
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertTriangle, ArrowDown, ArrowUp, Ban, Check, CheckCheck, ChevronLeft, ChevronRight, Copy, Download, Mail, Plus, Search, Send, Sparkles, X, XCircle } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, Ban, Check, CheckCheck, ChevronLeft, ChevronRight, Copy, Download, Mail, Plus, Repeat, Search, Send, Sparkles, X, XCircle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useToast } from "@/components/Toast";
-import { effectiveStatus, fmtDate, fmtDateTime, fmtRelative, STAFF, useStore, type Code } from "@/lib/store";
+import { errMsg, useStore } from "@/lib/store";
+import { effectiveStatus, fmtDate, fmtDateTime, fmtRelative, type Code } from "@/lib/shared";
 
 type SortKey = "name" | "createdAt" | "expiresAt";
 const PAGE = 10;
 const DAY = 864e5;
 
 export default function Codes() {
-  const { codes, rewards, user, settings, generateCode, sendCode, cancelCode, fulfil } = useStore();
+  const { codes, rewards, user, settings, generateCode, sendCode, cancelCode, fulfil, staffNames } = useStore();
   const toast = useToast();
   const [q, setQ] = useState(""); const [tab, setTab] = useState("all"); const [reward, setReward] = useState("all"); const [emp, setEmp] = useState("all"); const [range, setRange] = useState("all");
   const [sort, setSort] = useState<{ k: SortKey; dir: 1 | -1 }>({ k: "createdAt", dir: -1 });
@@ -56,13 +57,19 @@ export default function Codes() {
   const clearFilters = () => { setQ(""); setReward("all"); setEmp("all"); setRange("all"); setTab("all"); };
 
   const copy = async (code: string) => { try { await navigator.clipboard.writeText(code); } catch {} toast(`Copied ${code}`); };
-  const send = async (c: Code) => { setSending(true); await new Promise((r) => setTimeout(r, 800)); sendCode(c.id, c); setSending(false); toast(`Code emailed to ${c.email || c.name}`); };
+  const run = async (fn: () => Promise<unknown>, ok: string) => { try { await fn(); toast(ok); } catch (e) { toast(errMsg(e), "error"); } };
+  const send = async (c: Code) => { setSending(true); await run(() => sendCode(c.id), `Code emailed to ${c.email || c.name}`); setSending(false); };
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const c = generateCode({ name: form.name.trim(), org: form.org.trim(), email: form.email.trim(), days: form.days });
-    setCreated(c);
-    if (form.sendNow && c.email) { await send(c); }
-    setForm({ name: "", org: "", email: "", days: settings.defaultExpiry, sendNow: true });
+    setSending(true);
+    try {
+      const wantSend = form.sendNow && !!form.email.trim();
+      const r = await generateCode({ name: form.name.trim(), org: form.org.trim(), email: form.email.trim(), days: form.days, sendNow: wantSend });
+      setCreated(r.code);
+      if (wantSend && !r.emailed) toast("Code created, but the email couldn’t be sent — use Send code to retry", "error");
+      setForm({ name: "", org: "", email: "", days: settings.defaultExpiry, sendNow: true });
+    } catch (err) { toast(errMsg(err), "error"); }
+    setSending(false);
   };
   const closeModal = () => { setModal(false); setCreated(null); };
   const live = created ? codes.find((c) => c.id === created.id) ?? created : null;
@@ -114,7 +121,7 @@ export default function Codes() {
       <div className="toolbar">
         <div className="search"><Search size={17} /><input className="input" placeholder="Search recipient, organisation, email, code or reference…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
         <select className="input" value={reward} onChange={(e) => setReward(e.target.value)} aria-label="Reward"><option value="all">All rewards</option>{rewards.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}</select>
-        <select className="input" value={emp} onChange={(e) => setEmp(e.target.value)} aria-label="Employee"><option value="all">All employees</option>{STAFF.map((s) => <option key={s}>{s}</option>)}</select>
+        <select className="input" value={emp} onChange={(e) => setEmp(e.target.value)} aria-label="Employee"><option value="all">All employees</option>{staffNames.map((s: string) => <option key={s}>{s}</option>)}</select>
         <select className="input" value={range} onChange={(e) => setRange(e.target.value)} aria-label="Date"><option value="all">Any date</option><option value="1">Last 24 hours</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option></select>
         {(filtered || tab !== "all") && <button className="btn btn-ghost btn-sm" onClick={clearFilters}><X size={14} /> Clear</button>}
       </div>
@@ -128,7 +135,7 @@ export default function Codes() {
               return (
                 <motion.tr key={c.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }} onClick={() => setSel(c.id)}>
                   <td><b>{c.name}</b><div className="sub">{c.org || "—"}</div></td>
-                  <td><span className="mono">{c.code}</span></td>
+                  <td><span className="mono">{c.code}</span>{c.planId && <span className="chip neutral" title="Issued by a recurring plan" style={{ marginLeft: 8 }}><Repeat size={11} /> #{c.cycleNo}</span>}</td>
                   <td><span className={`chip ${s}`}>{s[0].toUpperCase() + s.slice(1)}</span> {c.emailedAt && s === "active" && <span title={`Emailed ${fmtDateTime(c.emailedAt)}`} style={{ color: "var(--dim)", verticalAlign: -2 }}><Mail size={14} /></span>}</td>
                   <td>{c.rewardId ? <><div>{rname(c.rewardId)}</div><span className={`chip ${c.fulfilment}`} style={{ marginTop: 4 }}>{c.fulfilment}</span></> : <span style={{ color: "var(--dim)" }}>—</span>}</td>
                   <td><div>{fmtDate(c.createdAt)}</div><div className="sub">by {c.createdBy}</div></td>
@@ -137,7 +144,7 @@ export default function Codes() {
                     <div className="row-actions">
                       <button className="icon-btn" title="Copy code" aria-label="Copy code" onClick={() => copy(c.code)}><Copy size={15} /></button>
                       {s === "active" && <button className="icon-btn" title={c.emailedAt ? "Resend code" : "Send code"} aria-label="Send code" onClick={() => send(c)}><Send size={15} /></button>}
-                      {s === "used" && c.fulfilment === "pending" && <button className="icon-btn" title="Mark fulfilled" aria-label="Mark fulfilled" style={{ color: "var(--green)" }} onClick={() => { fulfil(c.id); toast("Marked as fulfilled"); }}><CheckCheck size={16} /></button>}
+                      {s === "used" && c.fulfilment === "pending" && <button className="icon-btn" title="Mark fulfilled" aria-label="Mark fulfilled" style={{ color: "var(--green)" }} onClick={() => run(() => fulfil(c.id), "Marked as fulfilled")}><CheckCheck size={16} /></button>}
                       {s === "active" && <button className="icon-btn" title="Cancel code" aria-label="Cancel code" style={{ color: "var(--red)" }} onClick={() => setConfirm(c)}><Ban size={15} /></button>}
                     </div>
                   </td>
@@ -181,7 +188,7 @@ export default function Codes() {
                         {!canExpiry && <small style={{ color: "var(--dim)" }}>Set by admin ({settings.defaultExpiry} days)</small>}</div>
                       <label className="full check"><input type="checkbox" checked={form.sendNow && !!form.email} disabled={!form.email} onChange={(e) => setForm({ ...form, sendNow: e.target.checked })} /><span><b>Email the code immediately</b><small>{form.email ? `Sends the branded code email to ${form.email}` : "Add an email address to send straight away — otherwise read the code out on the call."}</small></span></label>
                     </div>
-                    <button className="btn btn-gold btn-lg" style={{ width: "100%", marginTop: 20 }} disabled={!emailOk || !form.name.trim()}><Sparkles size={18} /> Generate{form.sendNow && form.email ? " & send" : ""} code</button>
+                    <button className="btn btn-gold btn-lg" style={{ width: "100%", marginTop: 20 }} disabled={!emailOk || !form.name.trim() || sending}><Sparkles size={18} /> Generate{form.sendNow && form.email ? " & send" : ""} code</button>
                   </motion.form>
                 ) : (
                   <motion.div key="r" initial={{ opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }}>
@@ -215,7 +222,7 @@ export default function Codes() {
               <p style={{ color: "var(--muted)", margin: "8px 0 4px" }}><b className="mono">{confirm.code}</b> for {confirm.name} will stop working immediately. This can’t be undone.</p>
               <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
                 <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => setConfirm(null)}>Keep code</button>
-                <button className="btn btn-danger" style={{ flex: 1 }} onClick={() => { cancelCode(confirm.id); setConfirm(null); toast("Code cancelled"); }}><Ban size={15} /> Cancel code</button>
+                <button className="btn btn-danger" style={{ flex: 1 }} onClick={async () => { const id = confirm.id; setConfirm(null); await run(() => cancelCode(id), "Code cancelled"); }}><Ban size={15} /> Cancel code</button>
               </div>
             </motion.div>
           </motion.div>
@@ -250,7 +257,7 @@ export default function Codes() {
               <div style={{ display: "flex", gap: 10, marginTop: 20, flexWrap: "wrap" }}>
                 <button className="btn btn-ghost" onClick={() => copy(selected.code)}><Copy size={15} /> Copy</button>
                 {effectiveStatus(selected) === "active" && <button className="btn btn-primary" onClick={() => send(selected)}><Send size={15} /> {selected.emailedAt ? "Resend" : "Send"} code</button>}
-                {selected.status === "used" && selected.fulfilment === "pending" && <button className="btn btn-gold" onClick={() => { fulfil(selected.id); toast("Marked as fulfilled"); }}><CheckCheck size={16} /> Mark fulfilled</button>}
+                {selected.status === "used" && selected.fulfilment === "pending" && <button className="btn btn-gold" onClick={() => run(() => fulfil(selected.id), "Marked as fulfilled")}><CheckCheck size={16} /> Mark fulfilled</button>}
                 {effectiveStatus(selected) === "active" && <button className="btn btn-danger" onClick={() => { setConfirm(selected); setSel(null); }}><Ban size={15} /> Cancel code</button>}
               </div>
             </motion.aside>

@@ -1,13 +1,14 @@
 "use client";
 import { motion } from "framer-motion";
-import { CheckCheck, Download, KeyRound, PartyPopper, Pencil, Search, Send } from "lucide-react";
+import { CheckCheck, Download, KeyRound, PartyPopper, Pencil, Repeat, Search, Send } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useToast } from "@/components/Toast";
-import { fmtDateTime, useStore, type Activity } from "@/lib/store";
+import { useStore } from "@/lib/store";
+import { fmtDateTime, type Activity } from "@/lib/shared";
 
-const ICON = { code: KeyRound, email: Send, spin: PartyPopper, reward: Pencil, fulfil: CheckCheck } as const;
-const LABEL: Record<Activity["kind"], string> = { code: "Code", email: "Email", spin: "Spin", reward: "Settings", fulfil: "Fulfilment" };
-const FILTERS = [["all", "All"], ["code", "Codes"], ["email", "Emails"], ["spin", "Spins"], ["fulfil", "Fulfilment"], ["reward", "Settings"]] as const;
+const ICON = { code: KeyRound, email: Send, spin: PartyPopper, reward: Pencil, fulfil: CheckCheck, plan: Repeat } as const;
+const LABEL: Record<Activity["kind"], string> = { code: "Code", email: "Email", spin: "Spin", reward: "Settings", fulfil: "Fulfilment", plan: "Recurring" };
+const FILTERS = [["all", "All"], ["code", "Codes"], ["email", "Emails"], ["spin", "Spins"], ["fulfil", "Fulfilment"], ["plan", "Recurring"], ["reward", "Settings"]] as const;
 
 const dayLabel = (iso: string) => {
   const d = new Date(iso), t = new Date(); const y = new Date(); y.setDate(t.getDate() - 1);

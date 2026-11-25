@@ -1,15 +1,17 @@
 "use client";
 import { AnimatePresence, motion } from "framer-motion";
-import { LayoutDashboard, KeyRound, Gift, Mail, LogOut, Menu, Plus, ExternalLink, ScrollText, Users } from "lucide-react";
+import { LayoutDashboard, KeyRound, Gift, Mail, LogOut, Menu, Plus, ExternalLink, ScrollText, Users, Repeat } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Logo } from "@/components/Brand";
-import { effectiveStatus, useStore } from "@/lib/store";
+import { useStore } from "@/lib/store";
+import { effectiveStatus } from "@/lib/shared";
 
 const NAV = [
   { href: "/staff", label: "Dashboard", icon: LayoutDashboard },
   { href: "/staff/codes", label: "Codes & history", icon: KeyRound },
+  { href: "/staff/recurring", label: "Recurring spins", icon: Repeat },
   { href: "/staff/rewards", label: "Reward settings", icon: Gift },
   { href: "/staff/emails", label: "Email templates", icon: Mail },
   { href: "/staff/activity", label: "Activity log", icon: ScrollText },
@@ -48,7 +50,7 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
           <div className="usercard">
             <div className="avatar">{user.initials}</div>
             <div className="who"><b>{user.name}</b><small>{user.role}</small></div>
-            <button className="icon-btn" onClick={() => { logout(); router.push("/staff/login"); }} aria-label="Sign out" title="Sign out"><LogOut size={16} /></button>
+            <button className="icon-btn" onClick={async () => { await logout(); router.push("/staff/login"); }} aria-label="Sign out" title="Sign out"><LogOut size={16} /></button>
           </div>
         </aside>
         <div className="main">

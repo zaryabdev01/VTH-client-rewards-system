@@ -5,7 +5,8 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useToast } from "@/components/Toast";
 import Wheel, { ICONS, type WheelHandle } from "@/components/Wheel";
-import { useStore, type IconKey, type Reward } from "@/lib/store";
+import { errMsg, useStore } from "@/lib/store";
+import { type IconKey, type Reward } from "@/lib/shared";
 
 export default function Rewards() {
   const { rewards, user, updateReward, resetRewards, codes } = useStore();
@@ -32,14 +33,16 @@ export default function Rewards() {
   const lines = draft?.label.split("|") ?? [];
   const labelWarn = lines.length > 2 || lines.some((l) => l.length > 14);
 
-  const save = (e: React.FormEvent) => {
+  const save = async (e: React.FormEvent) => {
     e.preventDefault(); if (!draft) return;
-    updateReward(draft.id, { name: draft.name.trim(), label: draft.label, desc: draft.desc.trim(), icon: draft.icon });
-    toast("Reward saved — wheel & rules page updated"); close();
+    try {
+      await updateReward(draft.id, { name: draft.name.trim(), label: draft.label, desc: draft.desc.trim(), icon: draft.icon });
+      toast("Reward saved — wheel & rules page updated"); close();
+    } catch (err) { toast(errMsg(err), "error"); }
   };
-  const doReset = () => {
+  const doReset = async () => {
     if (!confirmReset) { setConfirmReset(true); setTimeout(() => setConfirmReset(false), 3500); return; }
-    resetRewards(); setConfirmReset(false); close(); toast("All 12 sections reset to defaults");
+    try { await resetRewards(); setConfirmReset(false); close(); toast("All 12 sections reset to defaults"); } catch (err) { toast(errMsg(err), "error"); }
   };
 
   return (

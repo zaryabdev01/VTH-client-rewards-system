@@ -1,7 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Inter, Instrument_Serif } from "next/font/google";
 import "./globals.css";
-import { StoreProvider } from "@/lib/store";
 import { ToastProvider } from "@/components/Toast";
 import ProtoGuide from "@/components/ProtoGuide";
 
@@ -15,12 +14,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${inter.variable} ${serif.variable}`}>
       <body>
-        <StoreProvider>
-          <ToastProvider>
-            {children}
-            <ProtoGuide />
-          </ToastProvider>
-        </StoreProvider>
+        <ToastProvider>
+          {children}
+          <ProtoGuide />
+        </ToastProvider>
       </body>
     </html>
   );

@@ -1,14 +1,16 @@
 "use client";
 import { motion } from "framer-motion";
+import { useEffect, useState } from "react";
 import { ArrowLeft, Scale } from "lucide-react";
 import Link from "next/link";
 import { Aurora, Logo } from "@/components/Brand";
 import { ICONS } from "@/components/Wheel";
-import { useStore } from "@/lib/store";
+import { api } from "@/lib/api";
+import { DEFAULT_REWARDS, type Reward } from "@/lib/shared";
 
 export default function Rules() {
-  const { rewards } = useStore();
-  const live = rewards.filter((r) => r.enabled);
+  const [live, setLive] = useState<Reward[]>(DEFAULT_REWARDS);
+  useEffect(() => { api.get<{ rewards: Reward[] }>("/api/public/wheel").then((d) => setLive(d.rewards)).catch(() => {}); }, []);
   const pct = live.length ? (100 / live.length).toFixed(2) : "0";
   return (
     <>

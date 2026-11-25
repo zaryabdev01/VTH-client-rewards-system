@@ -2,7 +2,7 @@
 import { animate, motion, useMotionValue, useReducedMotion } from "framer-motion";
 import { useEffect, useImperativeHandle, useRef, forwardRef } from "react";
 import { Coins, User, Percent, Zap, Gem, ArrowUpCircle, Users, Sparkles, Video, Award, Crown, Armchair, Lock, type LucideIcon } from "lucide-react";
-import type { IconKey, Reward } from "@/lib/store";
+import type { IconKey, Reward } from "@/lib/shared";
 
 export const ICONS: Record<IconKey, LucideIcon> = {
   coins: Coins, user: User, percent: Percent, zap: Zap, gem: Gem, arrowUp: ArrowUpCircle,
@@ -16,7 +16,9 @@ const FILLS = [
 const C = 200, R = 178;
 const polar = (r: number, deg: number) => {
   const a = ((deg - 90) * Math.PI) / 180;
-  return [C + r * Math.cos(a), C + r * Math.sin(a)];
+  // rounded so server-rendered and client-computed SVG are byte-identical (avoids hydration mismatches)
+  const q = (v: number) => Math.round(v * 1000) / 1000;
+  return [q(C + r * Math.cos(a)), q(C + r * Math.sin(a))];
 };
 const slice = (i: number) => {
   const [x1, y1] = polar(R, i * 30 - 15);
