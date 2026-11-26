@@ -1,10 +1,9 @@
-import { randomBytes } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { requireUser } from "@/lib/server/auth";
 import { getDb } from "@/lib/server/db";
-import { appUrl, inviteEmail, sendEmail } from "@/lib/server/email";
-import { ApiError, body, json, route, sha256 } from "@/lib/server/http";
+import { sendSetPasswordLink } from "@/lib/server/invites";
+import { ApiError, body, json, route } from "@/lib/server/http";
 import { users } from "@/lib/server/schema";
 import { toMember } from "@/lib/server/serialize";
 import { logActivity } from "@/lib/server/settings";
@@ -18,10 +17,9 @@ export const POST = route(async (req) => {
   const db = await getDb();
   const [exists] = await db.select({ id: users.id }).from(users).where(eq(sql`lower(${users.email})`, d.email.toLowerCase()));
   if (exists) throw new ApiError(409, "A team member with that email already exists");
-  const token = randomBytes(32).toString("base64url");
-  const [u] = await db.insert(users).values({ name: d.name, email: d.email.toLowerCase(), role: d.role, inviteTokenHash: sha256(token), inviteExpiresAt: new Date(Date.now() + 72 * 36e5), invitedAt: new Date() }).returning();
-  const url = `${appUrl()}/staff/accept?token=${token}`;
-  await sendEmail(db, { to: u.email, kind: "invite", ...inviteEmail({ name: u.name, inviter: me.name, url }) });
-  await logActivity(db, me.name, `Invited ${u.name} as ${u.role}`, "reward", me.id);
-  return json({ member: toMember(u), ...(process.env.RESEND_API_KEY ? {} : { devInviteUrl: url }) });
+  const [u] = await db.insert(users).values({ name: d.name, email: d.email.toLowerCase(), role: d.role }).returning();
+  const sent = await sendSetPasswordLink(db, u, me.name);
+  await logActivity(db, me.name, `Invited ${u.name} as ${u.role}${sent.delivered ? "" : " (email not sent, link shared manually)"}`, "reward", me.id);
+  const [fresh] = await db.select().from(users).where(eq(users.id, u.id));
+  return json({ member: toMember(fresh), emailed: sent.delivered, ...(sent.devInviteUrl ? { devInviteUrl: sent.devInviteUrl } : {}) });
 });

@@ -243,6 +243,15 @@ const rtoken = new URL(rst.devInviteUrl).searchParams.get("token");
 t("reset link sets a new password and signs in", (await J(await post("/api/auth/invite", { token: rtoken, password: "BrandNewPass123" }))).user?.email === "new.hire@vth.co.uk");
 t("the NEW password works and the OLD one no longer does", (await login("new.hire@vth.co.uk", "BrandNewPass123")).r.user?.email === "new.hire@vth.co.uk" && (await login("new.hire@vth.co.uk", "GoodPassw0rd!")).r.s === 401);
 t("standard staff cannot trigger a reset (403)", (await std.post(`/api/staff/team/${inv.member.id}/reset`, {})).s === 403);
+{
+  const inv2 = await admin.post("/api/staff/team", { name: "Resend Me", email: "resend.me@vth.co.uk", role: "standard" });
+  const oldTok = new URL(inv2.devInviteUrl).searchParams.get("token");
+  const again = await admin.post(`/api/staff/team/${inv2.member.id}/reset`, {});
+  t("admin can RESEND a pending invite (flagged as an invite, not a reset)", again.pending === true && !!again.devInviteUrl, JSON.stringify(again));
+  t("the OLD invite link stops working after a resend", (await J(await post("/api/auth/invite", { token: oldTok, password: "GoodPassw0rd!" }))).s === 404);
+  const newTok = new URL(again.devInviteUrl).searchParams.get("token");
+  t("the NEW invite link works", (await J(await post("/api/auth/invite", { token: newTok, password: "GoodPassw0rd!" }))).user?.email === "resend.me@vth.co.uk");
+}
 t("invite link is single-use", (await J(await post("/api/auth/invite", { token, password: "GoodPassw0rd!" }))).s === 404);
 
 console.log("\n=== BRUTE-FORCE PROTECTION (runs last) ===");

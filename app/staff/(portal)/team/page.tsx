@@ -16,8 +16,8 @@ export default function Team() {
     e.preventDefault();
     try {
       const r = await inviteMember(f);
-      toast(r.devInviteUrl ? "Invited — no email provider configured, invite link copied" : `Invitation sent to ${f.email}`);
-      if (r.devInviteUrl) { try { await navigator.clipboard.writeText(r.devInviteUrl); } catch {} console.info("Invite link:", r.devInviteUrl); }
+      if (r.emailed) toast(`Invitation sent to ${f.email}`);
+      else { if (r.devInviteUrl) { try { await navigator.clipboard.writeText(r.devInviteUrl); } catch {} } toast("Member added, but the email could not be sent. The invite link is copied: send it to them yourself.", "error"); }
       setInvite(false); setF({ name: "", email: "", role: "standard" });
     } catch (err) { toast(errMsg(err), "error"); }
   };
@@ -49,7 +49,14 @@ export default function Team() {
                   </td>
                   <td style={{ color: "var(--muted)" }}>{m.lastActive ? fmtRelative(m.lastActive) : "Never"}</td>
                   <td style={{ textAlign: "right" }}>
-                    {admin && m.active && <button className="btn btn-ghost btn-sm" style={{ marginRight: 12 }} onClick={async () => { try { const r = await resetPassword(m.id); toast(r.devInviteUrl ? "Reset link created (no email provider — see console)" : `Reset link emailed to ${m.name.split(" ")[0]}`); if (r.devInviteUrl) console.info("Reset link:", r.devInviteUrl); } catch (e) { toast(errMsg(e), "error"); } }}>Reset password</button>}
+                    {admin && m.active && <button className="btn btn-ghost btn-sm" style={{ marginRight: 12 }} onClick={async () => {
+                      try {
+                        const r = await resetPassword(m.id);
+                        const first = m.name.split(" ")[0];
+                        if (r.emailed) toast(r.pending ? `Invite sent again to ${first}. Earlier links no longer work` : `Reset link emailed to ${first}`);
+                        else { if (r.devInviteUrl) { try { await navigator.clipboard.writeText(r.devInviteUrl); } catch {} } toast("The email could not be sent. The link is copied: send it to them yourself.", "error"); }
+                      } catch (e) { toast(errMsg(e), "error"); }
+                    }}>{m.invited ? "Resend invite" : "Reset password"}</button>}
                     <button className={`toggle ${m.active ? "on" : ""}`} disabled={!admin || (m.role === "admin" && admins <= 1 && m.active)} role="switch" aria-checked={m.active} aria-label={`Access for ${m.name}`}
                       onClick={() => run(() => updateMember(m.id, { active: !m.active }), m.active ? `${m.name.split(" ")[0]} deactivated` : `${m.name.split(" ")[0]} re-activated`)} />
                   </td>

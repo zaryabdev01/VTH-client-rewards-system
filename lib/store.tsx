@@ -27,8 +27,8 @@ type Ctx = {
   saveLegal: (d: { slug: string; title: string; body: string; pdfUrl?: string | null }) => Promise<LegalDoc[]>; resetRewards: () => Promise<void>;
   saveTemplates: (t: Templates) => Promise<void>; saveSettings: (s: Settings) => Promise<void>;
   updateMember: (id: string, p: { role?: Role; active?: boolean }) => Promise<void>;
-  inviteMember: (d: { name: string; email: string; role: Role }) => Promise<{ devInviteUrl?: string }>;
-  resetPassword: (id: string) => Promise<{ devInviteUrl?: string }>;
+  inviteMember: (d: { name: string; email: string; role: Role }) => Promise<{ emailed: boolean; devInviteUrl?: string }>;
+  resetPassword: (id: string) => Promise<{ pending: boolean; emailed: boolean; devInviteUrl?: string }>;
   createPlan: (d: PlanInput) => Promise<{ plans: Plan[]; issued: number }>;
   planAction: (id: string, action: "pause" | "resume" | "cancel" | "issue-now") => Promise<{ plan: Plan; issued: number }>;
   runRenewals: () => Promise<{ plansRun: number; codesIssued: number; completed: number }>;
@@ -73,8 +73,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     saveTemplates: (t) => act(api.put("/api/staff/templates", t)).then(() => {}),
     saveSettings: (s) => act(api.put("/api/staff/settings", s)).then(() => {}),
     updateMember: (id, p) => act(api.patch(`/api/staff/team/${id}`, p)).then(() => {}),
-    inviteMember: (x) => act(api.post<{ devInviteUrl?: string }>("/api/staff/team", x)),
-    resetPassword: (id) => api.post<{ devInviteUrl?: string }>(`/api/staff/team/${id}/reset`),
+    inviteMember: (x) => act(api.post<{ emailed: boolean; devInviteUrl?: string }>("/api/staff/team", x)),
+    resetPassword: (id) => act(api.post<{ pending: boolean; emailed: boolean; devInviteUrl?: string }>(`/api/staff/team/${id}/reset`)),
     createPlan: (x) => act(api.post("/api/staff/plans", x)),
     planAction: (id, action) => act(api.patch(`/api/staff/plans/${id}`, { action })),
     runRenewals: async () => (await act(api.post<{ summary: { plansRun: number; codesIssued: number; completed: number } }>("/api/staff/plans/run"))).summary,
